@@ -67,23 +67,33 @@ def migrate_from_json_if_needed():
 
 # CRUD Operations
 
+def _parse_focus(fund_row: Dict) -> Dict:
+    """Helper to parse JSON focus field."""
+    d = dict(fund_row)
+    if d.get('focus') and isinstance(d['focus'], str):
+        try:
+            d['focus'] = json.loads(d['focus'])
+        except:
+            d['focus'] = []
+    return d
+
 def get_all_funds() -> List[Dict]:
     conn = get_db_connection()
     funds = conn.execute('SELECT * FROM funds').fetchall()
     conn.close()
-    return [dict(f) for f in funds]
+    return [_parse_focus(f) for f in funds]
 
 def get_active_funds() -> List[Dict]:
     conn = get_db_connection()
     funds = conn.execute('SELECT * FROM funds WHERE is_active = 1').fetchall()
     conn.close()
-    return [dict(f) for f in funds]
+    return [_parse_focus(f) for f in funds]
 
 def get_fund_by_code(code: str) -> Optional[Dict]:
     conn = get_db_connection()
     fund = conn.execute('SELECT * FROM funds WHERE code = ?', (code,)).fetchone()
     conn.close()
-    return dict(fund) if fund else None
+    return _parse_focus(fund) if fund else None
 
 def upsert_fund(fund_data: Dict):
     """

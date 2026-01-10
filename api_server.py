@@ -16,6 +16,7 @@ from src.analysis.pre_market import PreMarketAnalyst
 from src.analysis.post_market import PostMarketAnalyst
 from src.analysis.sentiment.dashboard import SentimentDashboard
 from src.analysis.commodities.gold_silver import GoldSilverAnalyst
+from src.analysis.dashboard import DashboardService
 from src.data_sources.akshare_api import search_funds
 from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code
 from src.scheduler.manager import scheduler_manager
@@ -150,6 +151,16 @@ def save_env_file(updates: Dict[str, str]):
         f.writelines(lines)
 
 # --- Endpoints ---
+
+@app.get("/api/dashboard/overview")
+async def get_dashboard_overview():
+    try:
+        service = DashboardService(REPORT_DIR)
+        return service.get_full_dashboard()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/commodities/analyze")
 async def analyze_commodity(request: CommodityAnalyzeRequest):

@@ -30,6 +30,16 @@ export const fetchReportContent = async (filename: string): Promise<string> => {
   return response.data.content;
 };
 
+export const fetchDashboardOverview = async (): Promise<any> => {
+  const response = await axios.get(`${API_BASE}/dashboard/overview`);
+  return response.data;
+};
+
+export const fetchMarketFunds = async (query: string): Promise<any[]> => {
+  const response = await axios.get(`${API_BASE}/market-funds`, { params: { query } });
+  return response.data;
+};
+
 export const generateReport = async (mode: 'pre' | 'post', fundCode?: string): Promise<void> => {
   await axios.post(`${API_BASE}/generate/${mode}`, { fund_code: fundCode });
 };

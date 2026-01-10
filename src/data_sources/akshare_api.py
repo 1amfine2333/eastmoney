@@ -343,6 +343,65 @@ def get_sector_performance(sector_name: str = None) -> Dict:
         print(f"Error fetching sector performance: {e}")
     return {}
 
+def get_sector_performance_ths(sector_name: str) -> Dict:
+    """
+    获取同花顺行业板块表现
+    """
+    try:
+        # 1. Get all board names
+        boards = ak.stock_board_industry_name_ths()
+        if boards.empty:
+            return {}
+            
+        target_name = None
+        # Simple fuzzy match
+        # If input is "半导体", match "半导体"
+        # If input is "新能源", match "新能源汽车" or similar?
+        # Let's try exact match first, then contains
+        
+        # Check if direct match exists
+        if sector_name in boards['name'].values:
+            target_name = sector_name
+        else:
+            # Contains
+            matches = boards[boards['name'].str.contains(sector_name, na=False, regex=False)]
+            if not matches.empty:
+                target_name = matches.iloc[0]['name']
+        
+        if not target_name:
+            return {}
+            
+        # 2. Fetch Index Data
+        # akshare expects start/end date usually to reduce data
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+        
+        df = ak.stock_board_industry_index_ths(symbol=target_name, start_date=start_date, end_date=end_date)
+        
+        if not df.empty:
+            latest = df.iloc[-1]
+            # Calculate change
+            change_pct = "N/A"
+            if len(df) >= 2:
+                prev = df.iloc[-2]['收盘价']
+                curr = latest['收盘价']
+                if prev and float(prev) != 0:
+                    pct = ((float(curr) - float(prev)) / float(prev)) * 100
+                    change_pct = f"{pct:.2f}"
+            
+            return {
+                "板块名称": target_name,
+                "收盘价": latest['收盘价'],
+                "涨跌幅": change_pct,
+                "成交量": latest['成交量'],
+                "成交额": latest['成交额'],
+                "日期": latest['日期']
+            }
+            
+    except Exception as e:
+        print(f"Error fetching THS sector performance for {sector_name}: {e}")
+    return {}
+
 def get_concept_board_performance(concept: str = None) -> Dict:
     """
     获取概念板块表现（如：AI、新能源等）

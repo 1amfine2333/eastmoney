@@ -24,6 +24,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import SpeedIcon from '@mui/icons-material/Speed';
 
 import { fetchMarketIndices,  } from '../../api';
 import type {IndexData} from '../../api';
@@ -31,6 +32,7 @@ import type {IndexData} from '../../api';
 const drawerWidth = 260;
 
 const MENU_ITEMS = [
+  { text: 'Dashboard', icon: <SpeedIcon />, path: '/dashboard', subtitle: 'Market cockpit' },
   { text: 'Universe', icon: <PieChartIcon />, path: '/funds', subtitle: 'Manage portfolio nodes' },
   { text: 'Sentiment', icon: <AutoGraphIcon />, path: '/sentiment', subtitle: 'Market vibe analysis' },
   { text: 'Intelligence', icon: <ArticleIcon />, path: '/reports', subtitle: 'Deep dive reports' },
