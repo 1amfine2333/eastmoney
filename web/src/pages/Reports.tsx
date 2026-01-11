@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
+import DeleteIcon from '@mui/icons-material/Delete';
 import html2canvas from 'html2canvas';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
@@ -30,7 +31,7 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { fetchReports, fetchReportContent } from '../api';
+import { fetchReports, fetchReportContent, deleteReport } from '../api';
 import type { ReportSummary } from '../api'
 
 export default function ReportsPage() {
@@ -60,8 +61,8 @@ export default function ReportsPage() {
             const data = await fetchReports();
             setReports(data);
 
-            // Auto-expand the first date
-            if (data.length > 0) {
+            // Auto-expand the first date if not already expanded (optional, user might want to keep state)
+            if (data.length > 0 && expandedDates.size === 0) {
                 const newestDate = data[0].date;
                 setExpandedDates(new Set([newestDate]));
 
@@ -84,6 +85,27 @@ export default function ReportsPage() {
             console.error("Failed to load content", error);
         } finally {
             setLoadingContent(false);
+        }
+    };
+
+    const handleDeleteReport = async (e: React.MouseEvent, filename: string) => {
+        e.stopPropagation(); // Prevent selecting the report when clicking delete
+        if (!window.confirm('Are you sure you want to delete this report?')) return;
+
+        try {
+            await deleteReport(filename);
+            
+            // If the deleted report was selected, clear selection
+            if (selectedReport?.filename === filename) {
+                setSelectedReport(null);
+                setReportContent('');
+            }
+            
+            // Reload list
+            await loadReports();
+        } catch (error) {
+            console.error("Failed to delete report", error);
+            alert("Failed to delete report");
         }
     };
 
@@ -247,11 +269,12 @@ export default function ReportsPage() {
                                                 sx={{ 
                                                     pl: 5, 
                                                     borderLeft: selectedReport?.filename === report.filename ? '3px solid #2563eb' : '3px solid transparent',
-                                                    bgcolor: selectedReport?.filename === report.filename ? '#eff6ff' : 'transparent'
+                                                    bgcolor: selectedReport?.filename === report.filename ? '#eff6ff' : 'transparent',
+                                                    '&:hover .delete-icon': { opacity: 1 }
                                                 }}
                                                 selected={selectedReport?.filename === report.filename}
                                                 onClick={() => handleSelectReport(report)}
-                                                className="hover:bg-slate-50"
+                                                className="hover:bg-slate-50 group"
                                             >
                                                 <ListItemIcon sx={{ minWidth: 28 }}>
                                                     <ArticleIcon fontSize="small" sx={{ fontSize: 18, color: report.mode === 'pre' ? '#2563eb' : '#d97706' }} />
@@ -262,6 +285,13 @@ export default function ReportsPage() {
                                                     primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 500, color: '#0f172a' }}
                                                     secondaryTypographyProps={{ fontSize: '0.65rem', color: '#64748b', letterSpacing: '0.05em' }}
                                                 />
+                                                <IconButton 
+                                                    size="small" 
+                                                    onClick={(e) => handleDeleteReport(e, report.filename)}
+                                                    className="delete-icon transition-opacity opacity-0 hover:text-red-500 text-slate-300"
+                                                >
+                                                    <DeleteIcon fontSize="small" style={{ fontSize: 16 }} />
+                                                </IconButton>
                                             </ListItemButton>
                                         ))}
 
@@ -297,11 +327,12 @@ export default function ReportsPage() {
                                                                         pl: 8,
                                                                         py: 1,
                                                                         borderLeft: selectedReport?.filename === report.filename ? '3px solid #2563eb' : '3px solid transparent',
-                                                                        bgcolor: selectedReport?.filename === report.filename ? '#eff6ff' : 'transparent'
+                                                                        bgcolor: selectedReport?.filename === report.filename ? '#eff6ff' : 'transparent',
+                                                                        '&:hover .delete-icon': { opacity: 1 }
                                                                     }}
                                                                     selected={selectedReport?.filename === report.filename}
                                                                     onClick={() => handleSelectReport(report)}
-                                                                    className="hover:bg-slate-100"
+                                                                    className="hover:bg-slate-100 group"
                                                                 >
                                                                     <ListItemIcon sx={{ minWidth: 24 }}>
                                                                         {report.mode === 'pre' ?
@@ -313,6 +344,13 @@ export default function ReportsPage() {
                                                                         primary={report.mode === 'pre' ? t('reports.strategy_analysis') : t('reports.performance_review')}
                                                                         primaryTypographyProps={{ fontSize: '0.8rem', color: '#334155' }}
                                                                     />
+                                                                    <IconButton 
+                                                                        size="small" 
+                                                                        onClick={(e) => handleDeleteReport(e, report.filename)}
+                                                                        className="delete-icon transition-opacity opacity-0 hover:text-red-500 text-slate-300"
+                                                                    >
+                                                                        <DeleteIcon fontSize="small" style={{ fontSize: 16 }} />
+                                                                    </IconButton>
                                                                 </ListItemButton>
                                                             ))}
                                                         </List>

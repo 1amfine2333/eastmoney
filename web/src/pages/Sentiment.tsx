@@ -13,6 +13,7 @@ import {
   ListItemText,
   ListSubheader,
   Tooltip,
+  IconButton
 } from '@mui/material';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import HistoryIcon from '@mui/icons-material/History';
@@ -20,10 +21,11 @@ import ArticleIcon from '@mui/icons-material/Article';
 import DownloadIcon from '@mui/icons-material/Download';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import DeleteIcon from '@mui/icons-material/Delete';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import html2canvas from 'html2canvas';
-import { runSentimentAnalysis, fetchSentimentReports, fetchReportContent } from '../api';
+import { runSentimentAnalysis, fetchSentimentReports, fetchReportContent, deleteSentimentReport } from '../api';
 import type { SentimentReportItem } from '../api';
 
 export default function SentimentPage() {
@@ -102,6 +104,23 @@ export default function SentimentPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDeleteReport = async (e: React.MouseEvent, filename: string) => {
+      e.stopPropagation();
+      if (!window.confirm('Are you sure you want to delete this report?')) return;
+
+      try {
+          await deleteSentimentReport(filename);
+          if (selectedFile === filename) {
+              setReport(null);
+              setSelectedFile(null);
+          }
+          await loadHistory();
+      } catch (err) {
+          console.error("Failed to delete report", err);
+          setError('Failed to delete report');
+      }
   };
 
   // Export report as image
@@ -214,6 +233,7 @@ export default function SentimentPage() {
                                     <ListItemButton 
                                         selected={selectedFile === item.filename}
                                         onClick={() => handleSelectReport(item.filename)}
+                                        className="group"
                                         sx={{
                                             mx: 1.5,
                                             my: 0.5,
@@ -242,6 +262,19 @@ export default function SentimentPage() {
                                                 sx: { mt: 0.5, color: selectedFile === item.filename ? '#60a5fa' : '#cbd5e1' } 
                                             }}
                                         />
+                                        <IconButton 
+                                            size="small" 
+                                            onClick={(e) => handleDeleteReport(e, item.filename)}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                            sx={{ 
+                                                color: '#94a3b8', 
+                                                '&:hover': { color: '#ef4444', bgcolor: 'rgba(239, 68, 68, 0.1)' },
+                                                padding: '4px',
+                                                mr: -1
+                                            }}
+                                        >
+                                            <DeleteIcon style={{ fontSize: 16 }} />
+                                        </IconButton>
                                     </ListItemButton>
                                 </ListItem>
                             );

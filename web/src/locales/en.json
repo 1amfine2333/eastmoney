@@ -142,6 +142,7 @@
       "delete_confirm": "Are you sure you want to remove this fund from your watch list?",
       "delete_success": "Fund removed from watchlist",
       "save_success": "Fund saved successfully",
+      "save_error": "Failed to save fund configuration",
       "trigger_success": "Intelligence node triggered successfully"
     }
   },

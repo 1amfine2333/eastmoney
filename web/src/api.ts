@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:8000/api';
+// In production (build), use relative path '/api' to let Nginx proxy handle it.
+// In development (dev), use env var or fallback to localhost:8000.
+const API_BASE = import.meta.env.PROD ? '/api' : (import.meta.env.VITE_API_URL || 'http://localhost:8000/api');
 
 export interface ReportSummary {
   filename: string;
@@ -14,6 +16,10 @@ export interface ReportSummary {
 export const fetchReports = async (): Promise<ReportSummary[]> => {
   const response = await axios.get(`${API_BASE}/reports`);
   return response.data;
+};
+
+export const deleteReport = async (filename: string): Promise<void> => {
+  await axios.delete(`${API_BASE}/reports/${filename}`);
 };
 
 export const fetchCommodityReports = async (): Promise<ReportSummary[]> => {

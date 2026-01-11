@@ -245,6 +245,24 @@ async def list_reports():
             
     return reports
 
+@app.delete("/api/reports/{filename}")
+async def delete_report(filename: str):
+    try:
+        # Security check
+        if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
+             raise HTTPException(status_code=400, detail="Invalid filename")
+             
+        file_path = os.path.join(REPORT_DIR, filename)
+        
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {"status": "success", "message": f"Deleted {filename}"}
+        else:
+            raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        print(f"Error deleting report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/reports/{filename}")
 async def get_report(filename: str):
     # Try root report dir first

@@ -74,6 +74,7 @@ export default function FundsPage() {
   // Search State
   const [searchResults, setSearchResults] = useState<MarketFund[]>([]);
   const [searching, setSearching] = useState(false);
+  const [inputValue, setInputValue] = useState(''); // Track input for manual search trigger
 
   // Detail View State
   const [detailOpen, setDetailOpen] = useState(false);
@@ -123,6 +124,7 @@ export default function FundsPage() {
   const handleOpenDialog = (fund?: FundItem) => {
     setAnchorEl(null);
     setSearchResults([]);
+    setInputValue('');
     if (fund) {
         setEditingFund(fund);
         setFormCode(fund.code);
@@ -166,7 +168,8 @@ export default function FundsPage() {
         setOpenDialog(false);
         loadFunds();
     } catch (error) {
-        showNotify(`Failed to save fund: ${error}`, 'error');
+        console.error(error);
+        showNotify(t('funds.messages.save_error'), 'error');
     }
   };
 
@@ -473,7 +476,8 @@ export default function FundsPage() {
                         <Typography variant="overline" sx={{ color: '#64748b', fontWeight: 800, mb: 1, display: 'block' }}>{t('funds.dialog.market_search')}</Typography>
                         <Autocomplete
                             fullWidth
-                            onInputChange={(_, value) => handleSearch(value)}
+                            inputValue={inputValue}
+                            onInputChange={(_, newInputValue) => setInputValue(newInputValue)}
                             onChange={handleMarketFundSelect}
                             options={searchResults}
                             getOptionLabel={(option) => `[${option.code}] ${option.name}`}
@@ -484,6 +488,12 @@ export default function FundsPage() {
                                 label={t('funds.dialog.search_placeholder')}
                                 variant="outlined"
                                 size="small"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleSearch(inputValue);
+                                    }
+                                }}
                                 InputProps={{
                                 ...params.InputProps,
                                 startAdornment: (

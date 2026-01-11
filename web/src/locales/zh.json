@@ -142,6 +142,7 @@
       "delete_confirm": "确定要从观察列表中移除此基金吗？",
       "delete_success": "基金已从观察列表移除",
       "save_success": "基金保存成功",
+      "save_error": "保存基金配置失败",
       "trigger_success": "情报节点触发成功"
     }
   },
