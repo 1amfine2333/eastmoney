@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import asyncio
 import pandas as pd
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Body
@@ -156,7 +157,7 @@ def save_env_file(updates: Dict[str, str]):
 async def get_dashboard_overview():
     try:
         service = DashboardService(REPORT_DIR)
-        return service.get_full_dashboard()
+        return await asyncio.to_thread(service.get_full_dashboard)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -168,7 +169,7 @@ async def analyze_commodity(request: CommodityAnalyzeRequest):
         analyst = GoldSilverAnalyst()
         # This is a synchronous call. For a real app, use background tasks.
         # But for this CLI tool, it's acceptable.
-        report = analyst.analyze(request.asset)
+        report = await asyncio.to_thread(analyst.analyze, request.asset)
         return {"status": "success", "message": f"{request.asset} analysis complete"}
     except Exception as e:
         import traceback
@@ -617,7 +618,7 @@ async def analyze_sentiment():
         dashboard = SentimentDashboard()
         # This might take time, ideally should be async or background task if very slow.
         # For now, synchronous call is acceptable for a single user tool.
-        report = dashboard.run_analysis()
+        report = await asyncio.to_thread(dashboard.run_analysis)
         
         # Save to file as well (optional, but good for history)
         sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
