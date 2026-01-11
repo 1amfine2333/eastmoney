@@ -45,6 +45,10 @@ export default function SentimentPage() {
     try {
       const data = await fetchSentimentReports();
       setHistory(data);
+      // Auto-load latest if none selected
+      if (data.length > 0 && !selectedFile) {
+          handleSelectReport(data[0].filename);
+      }
     } catch (err) {
       console.error("Failed to load history", err);
     }
@@ -112,6 +116,7 @@ export default function SentimentPage() {
 
       try {
           await deleteSentimentReport(filename);
+          // If deleted the current one, clear it
           if (selectedFile === filename) {
               setReport(null);
               setSelectedFile(null);

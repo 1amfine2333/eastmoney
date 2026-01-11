@@ -48,10 +48,9 @@ export default function CommoditiesPage() {
         try {
             const commodityReports = await fetchCommodityReports();
             setReports(commodityReports);
+            // Auto-select latest if available and none currently selected
             if (commodityReports.length > 0 && !selectedReport) {
-                // Don't auto-select if we just deleted everything, logic handled in delete
-                // But initially, yes.
-                // Actually, let's keep it simple: only auto-select on mount if null
+                handleSelectReport(commodityReports[0]);
             }
         } catch (error) {
             console.error("Failed to load reports", error);
@@ -77,11 +76,17 @@ export default function CommoditiesPage() {
             try {
                 await deleteCommodityReport(filename);
                 // Update local state immediately
-                setReports(prev => prev.filter(r => r.filename !== filename));
+                const updatedReports = reports.filter(r => r.filename !== filename);
+                setReports(updatedReports);
                 
                 if (selectedReport?.filename === filename) {
                     setSelectedReport(null);
                     setReportContent('');
+                    
+                    // Optional: Select next available if any
+                    if (updatedReports.length > 0) {
+                        handleSelectReport(updatedReports[0]);
+                    }
                 }
             } catch (error) {
                 console.error("Failed to delete report", error);

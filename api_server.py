@@ -4,7 +4,7 @@ import json
 import asyncio
 import pandas as pd
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -23,7 +23,9 @@ from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund
 from src.scheduler.manager import scheduler_manager
 from src.report_gen import save_report
 from src.data_sources.akshare_api import get_all_fund_list
-from datetime import datetime
+from datetime import datetime, timedelta
+from fastapi.security import OAuth2PasswordRequestForm
+from src.auth import Token, UserCreate, User, create_access_token, get_password_hash, verify_password, get_current_user, create_user, get_user_by_username
 
 # --- Startup/Shutdown ---
 @asynccontextmanager
@@ -38,10 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="EastMoney Report API", lifespan=lifespan)
 
 # Configure CORS
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,11 +50,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Auth Endpoints ---
+
+@app.post("/api/auth/register", response_model=Token)
+async def register(user: UserCreate):
+    existing = get_user_by_username(user.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_pwd = get_password_hash(user.password)
+    try:
+        user_id = create_user({
+            "username": user.username,
+            "email": user.email,
+            "hashed_password": hashed_pwd,
+            "provider": "local"
+        })
+        
+        # Auto login
+        access_token_expires = datetime.utcnow() + timedelta(minutes=60*24*7)
+        access_token = create_access_token(
+            data={"sub": user.username, "id": user_id},
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user_dict = get_user_by_username(form_data.username)
+    if not user_dict or not verify_password(form_data.password, user_dict['hashed_password']):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(
+        data={"sub": user_dict['username'], "id": user_dict['id']}
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/api/auth/me", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 MARKET_FUNDS_CACHE = os.path.join(CONFIG_DIR, "market_funds_cache.json")
+
+def get_user_report_dir(user_id: int) -> str:
+    user_dir = os.path.join(REPORT_DIR, str(user_id))
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+    return user_dir
 
 # --- Models ---
 
@@ -163,13 +213,22 @@ async def get_dashboard_overview():
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/dashboard/stats")
+async def get_dashboard_stats(current_user: User = Depends(get_current_user)):
+    try:
+        user_report_dir = get_user_report_dir(current_user.id)
+        service = DashboardService(REPORT_DIR)
+        # Stats are lightweight (filesystem only), no need for thread unless very many files
+        return service.get_system_stats(user_report_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/commodities/analyze")
-async def analyze_commodity(request: CommodityAnalyzeRequest):
+async def analyze_commodity(request: CommodityAnalyzeRequest, current_user: User = Depends(get_current_user)):
     try:
         analyst = GoldSilverAnalyst()
-        # This is a synchronous call. For a real app, use background tasks.
-        # But for this CLI tool, it's acceptable.
-        report = await asyncio.to_thread(analyst.analyze, request.asset)
+        # Offload heavy analysis to thread
+        report = await asyncio.to_thread(analyst.analyze, request.asset, current_user.id)
         return {"status": "success", "message": f"{request.asset} analysis complete"}
     except Exception as e:
         import traceback
@@ -177,22 +236,23 @@ async def analyze_commodity(request: CommodityAnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/reports", response_model=List[ReportSummary])
-async def list_reports():
-    if not os.path.exists(REPORT_DIR):
+async def list_reports(current_user: User = Depends(get_current_user)):
+    user_report_dir = get_user_report_dir(current_user.id)
+    if not os.path.exists(user_report_dir):
         return []
     
     # Load funds for name mapping
     fund_map = {}
     try:
-        funds = get_all_funds()
+        funds = get_all_funds(user_id=current_user.id)
         for f in funds:
             fund_map[f['code']] = f['name']
     except:
         pass
 
     reports = []
-    # Match all .md files
-    files = glob.glob(os.path.join(REPORT_DIR, "*.md"))
+    # Match all .md files in user dir
+    files = glob.glob(os.path.join(user_report_dir, "*.md"))
     files.sort(key=os.path.getmtime, reverse=True) # Newest first
     
     for f in files:
@@ -247,13 +307,14 @@ async def list_reports():
     return reports
 
 @app.delete("/api/reports/{filename}")
-async def delete_report(filename: str):
+async def delete_report(filename: str, current_user: User = Depends(get_current_user)):
     try:
         # Security check
         if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
              raise HTTPException(status_code=400, detail="Invalid filename")
-             
-        file_path = os.path.join(REPORT_DIR, filename)
+        
+        user_report_dir = get_user_report_dir(current_user.id)
+        file_path = os.path.join(user_report_dir, filename)
         
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -265,16 +326,19 @@ async def delete_report(filename: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/reports/{filename}")
-async def get_report(filename: str):
-    # Try root report dir first
-    filepath = os.path.join(REPORT_DIR, filename)
+async def get_report(filename: str, current_user: User = Depends(get_current_user)):
+    user_report_dir = get_user_report_dir(current_user.id)
+    
+    # Try user report dir first
+    filepath = os.path.join(user_report_dir, filename)
     if not os.path.exists(filepath):
-        # Try sentiment subdir
-        filepath = os.path.join(REPORT_DIR, "sentiment", filename)
+        # Try sentiment subdir (Global or User specific? Let's assume user specific for now or shared logic)
+        # If we want sentiment by user, we need get_user_report_dir(uid)/sentiment
+        filepath = os.path.join(user_report_dir, "sentiment", filename)
     
     if not os.path.exists(filepath):
         # Try commodities subdir
-        filepath = os.path.join(REPORT_DIR, "commodities", filename)
+        filepath = os.path.join(user_report_dir, "commodities", filename)
 
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Report not found")
@@ -285,12 +349,15 @@ async def get_report(filename: str):
     return {"content": content}
 
 @app.get("/api/commodities/reports", response_model=List[ReportSummary])
-async def list_commodity_reports():
-    commodities_dir = os.path.join(REPORT_DIR, "commodities")
+async def list_commodity_reports(current_user: User = Depends(get_current_user)):
+    user_report_dir = get_user_report_dir(current_user.id)
+    commodities_dir = os.path.join(user_report_dir, "commodities")
+    
     if not os.path.exists(commodities_dir):
         return []
 
     reports = []
+    # Match all .md files
     files = glob.glob(os.path.join(commodities_dir, "*.md"))
     files.sort(key=os.path.getmtime, reverse=True)
     
@@ -342,13 +409,14 @@ async def list_commodity_reports():
     return reports
 
 @app.delete("/api/commodities/reports/{filename}")
-async def delete_commodity_report(filename: str):
+async def delete_commodity_report(filename: str, current_user: User = Depends(get_current_user)):
     try:
         # Security check
         if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
              raise HTTPException(status_code=400, detail="Invalid filename")
              
-        commodities_dir = os.path.join(REPORT_DIR, "commodities")
+        user_report_dir = get_user_report_dir(current_user.id)
+        commodities_dir = os.path.join(user_report_dir, "commodities")
         file_path = os.path.join(commodities_dir, filename)
         
         if os.path.exists(file_path):
@@ -413,27 +481,29 @@ async def search_market_funds(query: str = ""):
     return results
 
 @app.post("/api/generate/{mode}")
-async def generate_report_endpoint(mode: str, request: GenerateRequest = None):
+async def generate_report_endpoint(mode: str, request: GenerateRequest = None, current_user: User = Depends(get_current_user)):
     if mode not in ["pre", "post"]:
         raise HTTPException(status_code=400, detail="Invalid mode. Use 'pre' or 'post'.")
     
     fund_code = request.fund_code if request else None
 
     try:
-        print(f"Generating {mode}-market report... (Fund: {fund_code if fund_code else 'ALL'})")
+        print(f"Generating {mode}-market report for User {current_user.id}... (Fund: {fund_code if fund_code else 'ALL'})")
         
-        # Use Scheduler's worker logic to execute immediately
+        # TODO: Ideally pass user_id to scheduler to save report in user dir
+        # For now, we update scheduler/report_gen later.
         if fund_code:
-            scheduler_manager.run_analysis_task(fund_code, mode)
+            # Pass user_id via extra args if scheduler supported it, currently it doesn't.
+            # We will patch this behavior by setting a context or passing args.
+            scheduler_manager.run_analysis_task(fund_code, mode, user_id=current_user.id)
             return {"status": "success", "message": f"Task triggered for {fund_code}"}
         else:
-            # If generating for ALL funds (Manual Trigger)
-            # We can iterate and run them
-            funds = get_active_funds()
+            # If generating for ALL funds (Manual Trigger) - Only for THIS user's funds
+            funds = get_active_funds(user_id=current_user.id)
             results = []
             for fund in funds:
                 try:
-                    scheduler_manager.run_analysis_task(fund['code'], mode)
+                    scheduler_manager.run_analysis_task(fund['code'], mode, user_id=current_user.id)
                     results.append(fund['code'])
                 except:
                     pass
@@ -499,9 +569,9 @@ def get_market_indices():
         return []
 
 @app.get("/api/funds")
-async def get_funds_endpoint():
+async def get_funds_endpoint(current_user: User = Depends(get_current_user)):
     try:
-        funds = get_all_funds()
+        funds = get_all_funds(user_id=current_user.id)
         # Convert JSON string focus to list if needed, DB layer handles dict conversion but 'focus' might be string
         result = []
         for f in funds:
@@ -528,17 +598,12 @@ async def get_funds_endpoint():
         return []
 
 @app.post("/api/funds")
-async def save_funds(funds: List[FundItem]):
+async def save_funds(funds: List[FundItem], current_user: User = Depends(get_current_user)):
     try:
         # Bulk upsert using DB
         for fund in funds:
             fund_dict = fund.model_dump()
-            # Ensure JSON serialization for list fields if needed by DB wrapper, 
-            # but src.storage.db.upsert_fund handles dicts. 
-            # Ideally db.upsert_fund expects a dict matching the schema.
-            # We need to ensure focus is list or string? 
-            # In db.py, it handles conversion.
-            upsert_fund(fund_dict)
+            upsert_fund(fund_dict, user_id=current_user.id)
         return {"status": "success"}
     except Exception as e:
         import traceback
@@ -546,12 +611,15 @@ async def save_funds(funds: List[FundItem]):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/funds/{code}")
-async def upsert_fund_endpoint(code: str, fund: FundItem):
+async def upsert_fund_endpoint(code: str, fund: FundItem, current_user: User = Depends(get_current_user)):
     try:
         fund_dict = fund.model_dump()
-        upsert_fund(fund_dict)
+        upsert_fund(fund_dict, user_id=current_user.id)
         
         # Also update scheduler!
+        # Scheduler update is tricky in multi-tenant. 
+        # For now, we add the job, but scheduler logic needs to be aware of user.
+        # Ideally scheduler iterates ALL users and ALL funds.
         scheduler_manager.add_fund_jobs(fund_dict)
         
         return {"status": "success"}
@@ -561,9 +629,9 @@ async def upsert_fund_endpoint(code: str, fund: FundItem):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/funds/{code}")
-async def delete_fund_endpoint(code: str):
+async def delete_fund_endpoint(code: str, current_user: User = Depends(get_current_user)):
     try:
-        delete_fund(code)
+        delete_fund(code, user_id=current_user.id)
         # Remove from scheduler
         scheduler_manager.remove_fund_jobs(code)
         return {"status": "success"}
@@ -613,7 +681,7 @@ async def update_settings(settings: SettingsUpdate):
     return {"status": "success"}
 
 @app.post("/api/sentiment/analyze")
-async def analyze_sentiment():
+async def analyze_sentiment(current_user: User = Depends(get_current_user)):
     try:
         dashboard = SentimentDashboard()
         # This might take time, ideally should be async or background task if very slow.
@@ -621,7 +689,8 @@ async def analyze_sentiment():
         report = await asyncio.to_thread(dashboard.run_analysis)
         
         # Save to file as well (optional, but good for history)
-        sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
+        user_report_dir = get_user_report_dir(current_user.id)
+        sentiment_dir = os.path.join(user_report_dir, "sentiment")
         if not os.path.exists(sentiment_dir):
             os.makedirs(sentiment_dir)
             
@@ -637,8 +706,10 @@ async def analyze_sentiment():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sentiment/reports")
-async def list_sentiment_reports():
-    sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
+async def list_sentiment_reports(current_user: User = Depends(get_current_user)):
+    user_report_dir = get_user_report_dir(current_user.id)
+    sentiment_dir = os.path.join(user_report_dir, "sentiment")
+    
     if not os.path.exists(sentiment_dir):
         return []
     
@@ -677,13 +748,14 @@ async def list_sentiment_reports():
     return reports
 
 @app.delete("/api/sentiment/reports/{filename}")
-async def delete_sentiment_report(filename: str):
+async def delete_sentiment_report(filename: str, current_user: User = Depends(get_current_user)):
     try:
         # Security check: only allow .md files in sentiment dir, no path traversal
         if not filename.endswith(".md") or ".." in filename or "/" in filename or "\\" in filename:
              raise HTTPException(status_code=400, detail="Invalid filename")
              
-        sentiment_dir = os.path.join(REPORT_DIR, "sentiment")
+        user_report_dir = get_user_report_dir(current_user.id)
+        sentiment_dir = os.path.join(user_report_dir, "sentiment")
         file_path = os.path.join(sentiment_dir, filename)
         
         if os.path.exists(file_path):

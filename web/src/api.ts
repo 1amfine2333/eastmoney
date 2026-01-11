@@ -4,6 +4,51 @@ import axios from 'axios';
 // In development (dev), use env var or fallback to localhost:8000.
 const API_BASE = import.meta.env.PROD ? '/api' : (import.meta.env.VITE_API_URL || 'http://localhost:8000/api');
 
+// Create axios instance
+const api = axios.create({
+    baseURL: API_BASE,
+});
+
+// Request interceptor: Inject Token
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+}, (error) => Promise.reject(error));
+
+// Response interceptor: Handle 401
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            // Token expired or invalid
+            localStorage.removeItem('token');
+            if (window.location.pathname !== '/login') {
+                window.location.href = '/login';
+            }
+        }
+        return Promise.reject(error);
+    }
+);
+
+// --- Auth API ---
+export const login = async (username: string, password: string): Promise<{ access_token: string }> => {
+    const formData = new FormData();
+    formData.append('username', username);
+    formData.append('password', password);
+    const response = await api.post('/auth/token', formData);
+    return response.data;
+};
+
+export const register = async (username: string, password: string, email?: string): Promise<{ access_token: string }> => {
+    const response = await api.post('/auth/register', { username, password, email });
+    return response.data;
+};
+
+// --- Existing APIs (Updated to use 'api' instance) ---
+
 export interface ReportSummary {
   filename: string;
   date: string;
@@ -14,44 +59,49 @@ export interface ReportSummary {
 }
 
 export const fetchReports = async (): Promise<ReportSummary[]> => {
-  const response = await axios.get(`${API_BASE}/reports`);
+  const response = await api.get('/reports');
   return response.data;
 };
 
 export const deleteReport = async (filename: string): Promise<void> => {
-  await axios.delete(`${API_BASE}/reports/${filename}`);
+  await api.delete(`/reports/${filename}`);
 };
 
 export const fetchCommodityReports = async (): Promise<ReportSummary[]> => {
-  const response = await axios.get(`${API_BASE}/commodities/reports`);
+  const response = await api.get('/commodities/reports');
   return response.data;
 };
 
 export const deleteCommodityReport = async (filename: string): Promise<void> => {
-  await axios.delete(`${API_BASE}/commodities/reports/${filename}`);
+  await api.delete(`/commodities/reports/${filename}`);
 };
 
 export const generateCommodityReport = async (asset: 'gold' | 'silver'): Promise<void> => {
-  await axios.post(`${API_BASE}/commodities/analyze`, { asset });
+  await api.post('/commodities/analyze', { asset });
 };
 
 export const fetchReportContent = async (filename: string): Promise<string> => {
-  const response = await axios.get(`${API_BASE}/reports/${filename}`);
+  const response = await api.get(`/reports/${filename}`);
   return response.data.content;
 };
 
 export const fetchDashboardOverview = async (): Promise<any> => {
-  const response = await axios.get(`${API_BASE}/dashboard/overview`);
+  const response = await api.get('/dashboard/overview');
+  return response.data;
+};
+
+export const fetchDashboardStats = async (): Promise<any> => {
+  const response = await api.get('/dashboard/stats');
   return response.data;
 };
 
 export const fetchMarketFunds = async (query: string): Promise<any[]> => {
-  const response = await axios.get(`${API_BASE}/market-funds`, { params: { query } });
+  const response = await api.get('/market-funds', { params: { query } });
   return response.data;
 };
 
 export const generateReport = async (mode: 'pre' | 'post', fundCode?: string): Promise<void> => {
-  await axios.post(`${API_BASE}/generate/${mode}`, { fund_code: fundCode });
+  await api.post(`/generate/${mode}`, { fund_code: fundCode });
 };
 
 export interface FundItem {
@@ -79,16 +129,16 @@ export interface SettingsUpdate {
 }
 
 export const fetchFunds = async (): Promise<FundItem[]> => {
-  const response = await axios.get(`${API_BASE}/funds`);
+  const response = await api.get('/funds');
   return response.data;
 };
 
 export const saveFund = async (fund: FundItem): Promise<void> => {
-  await axios.put(`${API_BASE}/funds/${fund.code}`, fund);
+  await api.put(`/funds/${fund.code}`, fund);
 };
 
 export const deleteFund = async (code: string): Promise<void> => {
-  await axios.delete(`${API_BASE}/funds/${code}`);
+  await api.delete(`/funds/${code}`);
 };
 
 export interface MarketFund {
@@ -99,7 +149,7 @@ export interface MarketFund {
 }
 
 export const searchMarketFunds = async (query: string): Promise<MarketFund[]> => {
-    const response = await axios.get(`${API_BASE}/market/funds`, { params: { q: query } });
+    const response = await api.get('/market/funds', { params: { q: query } });
     return response.data;
 };
 
@@ -109,7 +159,7 @@ export interface FundMarketDetails {
 }
 
 export const fetchFundMarketDetails = async (code: string): Promise<FundMarketDetails> => {
-    const response = await axios.get(`${API_BASE}/market/funds/${code}/details`);
+    const response = await api.get(`/market/funds/${code}/details`);
     return response.data;
 };
 
@@ -127,22 +177,22 @@ export interface IndexData {
 }
 
 export const fetchMarketIndices = async (): Promise<IndexData[]> => {
-    const response = await axios.get(`${API_BASE}/market/indices`);
+    const response = await api.get('/market/indices');
     return response.data;
 };
 
 export const fetchFundNavHistory = async (code: string): Promise<NavPoint[]> => {
-    const response = await axios.get(`${API_BASE}/market/funds/${code}/nav`);
+    const response = await api.get(`/market/funds/${code}/nav`);
     return response.data;
 };
 
 export const fetchSettings = async (): Promise<SettingsData> => {
-  const response = await axios.get(`${API_BASE}/settings`);
+  const response = await api.get('/settings');
   return response.data;
 };
 
 export const saveSettings = async (settings: SettingsUpdate): Promise<void> => {
-  await axios.post(`${API_BASE}/settings`, settings);
+  await api.post('/settings', settings);
 };
 
 export interface SentimentResponse {
@@ -151,7 +201,7 @@ export interface SentimentResponse {
 }
 
 export const runSentimentAnalysis = async (): Promise<SentimentResponse> => {
-  const response = await axios.post(`${API_BASE}/sentiment/analyze`);
+  const response = await api.post('/sentiment/analyze');
   return response.data;
 };
 
@@ -161,10 +211,10 @@ export interface SentimentReportItem {
 }
 
 export const fetchSentimentReports = async (): Promise<SentimentReportItem[]> => {
-  const response = await axios.get(`${API_BASE}/sentiment/reports`);
+  const response = await api.get('/sentiment/reports');
   return response.data;
 };
 
 export const deleteSentimentReport = async (filename: string): Promise<void> => {
-  await axios.delete(`${API_BASE}/sentiment/reports/${filename}`);
+  await api.delete(`/sentiment/reports/${filename}`);
 };

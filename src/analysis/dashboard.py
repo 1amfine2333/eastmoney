@@ -45,22 +45,51 @@ class DashboardService:
         }
 
         try:
-            # 1. Indices (Shanghai, Shenzhen, ChiNext)
+            # 1. Indices (Shanghai, Shenzhen, ChiNext, HSI, Nasdaq)
             # stock_zh_index_spot_em is the correct function
             indices_df = ak.stock_zh_index_spot_em()
-            targets = ["上证指数", "深证成指", "创业板指"]
+            # Note: stock_zh_index_spot_em mainly returns A-share indices.
+            # To get HSI and Nasdaq, we might need index_global_spot_em() OR accept they might be missing here.
+            # However, api_server.py's get_market_indices uses index_global_spot_em().
+            # Let's try to stick to consistent sources. 
+            # If stock_zh_index_spot_em lacks them, we should use index_global_spot_em instead for this section too.
             
-            # This API returns a huge list, better filter by name
-            if not indices_df.empty:
+            # Let's switch to index_global_spot_em for a unified view if possible, or fetch separately.
+            # Actually, let's just fetch global indices here to ensure coverage.
+            try:
+                global_df = ak.index_global_spot_em()
+            except:
+                global_df = pd.DataFrame()
+
+            targets = ["上证指数", "恒生指数", "纳斯达克"]
+            # Helper to find in DF
+            def find_idx(df, name):
+                if df.empty: return None
+                row = df[df['名称'] == name]
+                if not row.empty:
+                    r = row.iloc[0]
+                    # Normalize columns. global_spot has '最新价', '涨跌幅', '涨跌额'
+                    # zh_spot has same.
+                    return {
+                        "name": name,
+                        "price": r['最新价'],
+                        "change": r['涨跌幅']
+                    }
+                return None
+
+            # Try global first (it has HSI/Nasdaq), then fall back or merge
+            # Actually global usually has SH/SZ too.
+            source_df = global_df if not global_df.empty else indices_df
+            
+            if not source_df.empty:
                 for name in targets:
-                    row = indices_df[indices_df['名称'] == name]
-                    if not row.empty:
-                        r = row.iloc[0]
-                        data["indices"].append({
-                            "name": name,
-                            "price": r['最新价'],
-                            "change": r['涨跌幅']
-                        })
+                    item = find_idx(source_df, name)
+                    # If not found in global (e.g. ChiNext might be missing in global top list), try zh list
+                    if not item and not indices_df.empty and source_df is not indices_df:
+                        item = find_idx(indices_df, name)
+                    
+                    if item:
+                        data["indices"].append(item)
             
             # 2. Turnover & Breadth
             # Breadth via Legu (Fast)
@@ -252,9 +281,11 @@ class DashboardService:
         self._set_cached_data(cache_key, stocks)
         return stocks
 
-    def get_system_stats(self) -> Dict[str, Any]:
-        """Section 6: Report Generation Stats (Today)"""
-        # No caching needed, file system is fast enough and we want realtime status
+    def get_system_stats(self, user_report_dir: str = None) -> Dict[str, Any]:
+        """Section 6: Report Generation Stats (Today) - User Specific"""
+        # If no user_report_dir provided, use default (but this should be avoided for multi-tenant)
+        target_dir = user_report_dir if user_report_dir else self.report_dir
+        
         today_str = datetime.now().strftime("%Y-%m-%d")
         
         stats = {
@@ -269,18 +300,19 @@ class DashboardService:
         
         all_files = []
         
-        # Root reports (Pre/Post)
-        root_files = glob.glob(os.path.join(self.report_dir, f"{today_str}*.md"))
-        all_files.extend([(f, 'root') for f in root_files])
-        
-        # Commodity
-        comm_files = glob.glob(os.path.join(self.report_dir, "commodities", f"{today_str}*.md"))
-        all_files.extend([(f, 'commodity') for f in comm_files])
-        
-        # Sentiment (Format: sentiment_YYYYMMDD...)
-        sent_date = datetime.now().strftime("%Y%m%d")
-        sent_files = glob.glob(os.path.join(self.report_dir, "sentiment", f"sentiment_{sent_date}*.md"))
-        all_files.extend([(f, 'sentiment') for f in sent_files])
+        if os.path.exists(target_dir):
+            # Root reports (Pre/Post)
+            root_files = glob.glob(os.path.join(target_dir, f"{today_str}*.md"))
+            all_files.extend([(f, 'root') for f in root_files])
+            
+            # Commodity
+            comm_files = glob.glob(os.path.join(target_dir, "commodities", f"{today_str}*.md"))
+            all_files.extend([(f, 'commodity') for f in comm_files])
+            
+            # Sentiment (Format: sentiment_YYYYMMDD...)
+            sent_date = datetime.now().strftime("%Y%m%d")
+            sent_files = glob.glob(os.path.join(target_dir, "sentiment", f"sentiment_{sent_date}*.md"))
+            all_files.extend([(f, 'sentiment') for f in sent_files])
         
         stats["total"] = len(all_files)
         
@@ -303,12 +335,12 @@ class DashboardService:
         return stats
 
     def get_full_dashboard(self) -> Dict[str, Any]:
-        """Aggregate all data"""
+        """Aggregate all GLOBAL data"""
         return {
             "market_overview": self.get_market_overview(),
             "gold_macro": self.get_gold_macro(),
             "sectors": self.get_sectors(),
             "abnormal_movements": self.get_abnormal_movements(),
             "top_flows": self.get_top_holdings_changes(),
-            "system_stats": self.get_system_stats()
+            # System stats removed from global cache
         }

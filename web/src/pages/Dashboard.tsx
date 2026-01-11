@@ -15,7 +15,7 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import PublicIcon from '@mui/icons-material/Public';
 import StorageIcon from '@mui/icons-material/Storage';
 import TimelineIcon from '@mui/icons-material/Timeline';
-import { fetchDashboardOverview } from '../api';
+import { fetchDashboardOverview, fetchDashboardStats } from '../api';
 
 // --- Utility Components ---
 
@@ -39,13 +39,19 @@ const ColorVal = ({ val, suffix = "", bold = true }: { val: number, suffix?: str
 export default function DashboardPage() {
     const { t } = useTranslation();
     const [data, setData] = useState<any>(null);
+    const [stats, setStats] = useState<any>(null);
     const [loading, setLoading] = useState(true);
 
     const loadData = async () => {
         if (!data) setLoading(true);
         try {
-            const res = await fetchDashboardOverview();
-            setData(res);
+            // Parallel fetch
+            const [overview, userStats] = await Promise.all([
+                fetchDashboardOverview(),
+                fetchDashboardStats()
+            ]);
+            setData(overview);
+            setStats(userStats);
         } catch (error) {
             console.error("Failed to load dashboard", error);
         } finally {
@@ -62,7 +68,10 @@ export default function DashboardPage() {
     if (loading && !data) return <Box className="h-screen flex items-center justify-center"><CircularProgress size={24} className="text-slate-400"/></Box>;
     if (!data) return <Box className="p-10">{t('common.system_offline')}</Box>;
 
-    const { market_overview, gold_macro, sectors, abnormal_movements, top_flows, system_stats } = data;
+    const { market_overview, gold_macro, sectors, abnormal_movements, top_flows } = data;
+    // system_stats comes from separate API now
+    const system_stats = stats;
+    
     const breadth = market_overview?.breadth || { up: 0, down: 0, flat: 0, limit_up: 0, limit_down: 0 };
     const total_stocks = breadth.up + breadth.down + breadth.flat || 1;
     const up_pct = (breadth.up / total_stocks) * 100;
@@ -91,21 +100,23 @@ export default function DashboardPage() {
             {/* LAYER 1: MACRO STRIP (Flex Row - Full Width) */}
             <Paper elevation={0} className="w-full border border-slate-200 rounded-xl bg-white flex flex-col lg:flex-row overflow-hidden shadow-sm min-h-[140px]">
                 
-                {/* 1. System Status */}
+                {/* 1. System Status (User Isolated) */}
                 <Box className="flex-[0.8] p-5 border-b lg:border-b-0 lg:border-r border-slate-100 flex flex-col justify-between relative overflow-hidden bg-slate-50/50">
                     <StorageIcon className="absolute -right-4 -bottom-4 text-slate-200 opacity-20 text-8xl" />
                     <Box>
                         <Typography variant="caption" className="text-slate-400 font-bold uppercase tracking-wider">{t('dashboard.macro.system_reports')}</Typography>
                         <Box className="flex items-baseline gap-2 mt-1">
                              <Typography variant="h3" className="font-bold text-slate-800 leading-none">
-                                {system_stats?.total}
+                                {system_stats?.total || 0}
                             </Typography>
                              <Typography variant="caption" className="text-slate-400 font-bold">{t('dashboard.macro.files')}</Typography>
                         </Box>
                     </Box>
-                    <Box className="flex gap-2 mt-2">
-                        <Chip label={`${t('dashboard.macro.pre')} ${system_stats?.breakdown?.pre}`} size="small" className="h-5 text-[10px] bg-indigo-100 text-indigo-700 font-bold border border-indigo-200" />
-                        <Chip label={`${t('dashboard.macro.post')} ${system_stats?.breakdown?.post}`} size="small" className="h-5 text-[10px] bg-purple-100 text-purple-700 font-bold border border-purple-200" />
+                    <Box className="flex flex-wrap gap-2 mt-2">
+                        <Chip label={`${t('dashboard.macro.pre')} ${system_stats?.breakdown?.pre || 0}`} size="small" className="h-5 text-[10px] bg-indigo-100 text-indigo-700 font-bold border border-indigo-200" />
+                        <Chip label={`${t('dashboard.macro.post')} ${system_stats?.breakdown?.post || 0}`} size="small" className="h-5 text-[10px] bg-purple-100 text-purple-700 font-bold border border-purple-200" />
+                        <Chip label={`${t('dashboard.macro.sentiment')} ${system_stats?.breakdown?.sentiment || 0}`} size="small" className="h-5 text-[10px] bg-pink-100 text-pink-700 font-bold border border-pink-200" />
+                        <Chip label={`${t('dashboard.macro.commodity')} ${system_stats?.breakdown?.commodity || 0}`} size="small" className="h-5 text-[10px] bg-amber-100 text-amber-700 font-bold border border-amber-200" />
                     </Box>
                 </Box>
 

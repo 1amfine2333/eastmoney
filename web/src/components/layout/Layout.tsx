@@ -22,15 +22,16 @@ import ArticleIcon from '@mui/icons-material/Article';
 import SettingsIcon from '@mui/icons-material/Settings';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import MonetizationOnIcon from '@mui/icons-material/MonetizationOn';
-import WifiTetheringIcon from '@mui/icons-material/WifiTethering';
 import PublicIcon from '@mui/icons-material/Public';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import SpeedIcon from '@mui/icons-material/Speed';
 import LanguageIcon from '@mui/icons-material/Language';
+import LogoutIcon from '@mui/icons-material/Logout';
+import PersonIcon from '@mui/icons-material/Person';
 
-import { fetchMarketIndices,  } from '../../api';
+import { fetchMarketIndices } from '../../api';
 import type {IndexData} from '../../api';
 
 const drawerWidth = 260;
@@ -40,6 +41,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [indices, setIndices] = useState<IndexData[]>([]);
+  const [username, setUsername] = useState<string>('User');
   
   // Language Menu State
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
@@ -54,6 +56,20 @@ export default function Layout() {
     setAnchorEl(null);
   };
 
+  // User Menu State
+  const [userAnchorEl, setUserAnchorEl] = useState<null | HTMLElement>(null);
+  const userOpen = Boolean(userAnchorEl);
+  const handleUserClick = (event: React.MouseEvent<HTMLElement>) => {
+    setUserAnchorEl(event.currentTarget);
+  };
+  const handleUserClose = () => {
+    setUserAnchorEl(null);
+  };
+  const handleLogout = () => {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+  };
+
   const MENU_ITEMS = useMemo(() => [
     { text: t('layout.menu.dashboard'), icon: <SpeedIcon />, path: '/dashboard', subtitle: t('layout.menu.dashboard_sub') },
     { text: t('layout.menu.universe'), icon: <PieChartIcon />, path: '/funds', subtitle: t('layout.menu.universe_sub') },
@@ -64,6 +80,7 @@ export default function Layout() {
   ], [t]);
 
   useEffect(() => {
+    // Load Indices
     const loadIndices = async () => {
       try {
         const data = await fetchMarketIndices();
@@ -73,7 +90,33 @@ export default function Layout() {
       }
     };
     
+    // Load User Info
+    const loadUser = async () => {
+        try {
+            // We can decode token or fetch /api/auth/me
+            // Let's decode token for speed, or assume it's valid if we are here (guarded by PrivateRoute)
+            const token = localStorage.getItem('token');
+            if (token) {
+                try {
+                    // Simple parse
+                    const base64Url = token.split('.')[1];
+                    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+                        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                    }).join(''));
+                    const payload = JSON.parse(jsonPayload);
+                    setUsername(payload.sub || 'User');
+                } catch (e) {
+                    console.error("Failed to parse token", e);
+                }
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
     loadIndices();
+    loadUser();
     const timer = setInterval(loadIndices, 60000); // Refresh every 60s
     return () => clearInterval(timer);
   }, []);
@@ -102,9 +145,6 @@ export default function Layout() {
             <Typography variant="h6" className="tracking-wide font-bold text-slate-900 leading-none" sx={{ fontFamily: 'JetBrains Mono' }}>
               V<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-purple-600">{t('layout.title')}</span>
             </Typography>
-            {/* <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.6rem', mt: 0.5, letterSpacing: '0.1em' }}>
-              {t('layout.subtitle')}
-            </Typography> */}
           </div>
         </div>
         
@@ -159,10 +199,12 @@ export default function Layout() {
 
         <Box sx={{ p: 3, borderTop: '1px solid #f1f5f9' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 1.5, bgcolor: '#f8fafc', borderRadius: '12px' }}>
-                <Avatar sx={{ width: 32, height: 32, bgcolor: '#6366f1', fontSize: '0.8rem', fontWeight: 800 }}>A</Avatar>
+                <Avatar sx={{ width: 32, height: 32, bgcolor: '#6366f1', fontSize: '0.8rem', fontWeight: 800 }}>
+                    {username.charAt(0).toUpperCase()}
+                </Avatar>
                 <Box>
-                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 800, color: '#1e293b' }}>{t('layout.user.admin')}</Typography>
-                    <Typography sx={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 600 }}>{t('layout.user.role')}</Typography>
+                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 800, color: '#1e293b' }}>{username}</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 600 }}>Pro License</Typography>
                 </Box>
             </Box>
         </Box>
@@ -174,6 +216,7 @@ export default function Layout() {
         {/* Modern Header */}
         <Box component="header" sx={{ 
             height: 70, 
+            flexShrink: 0, // Prevent header from shrinking
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'space-between',
@@ -185,10 +228,10 @@ export default function Layout() {
         }}>
             {/* Left: Page Identity */}
             <Box sx={{ width: 240, flexShrink: 0 }}>
-                <Typography noWrap sx={{ color: '#0f172a', fontWeight: 900, fontSize: '1.1rem', letterSpacing: '-0.02em' }}>
+                <Typography noWrap sx={{ color: '#0f172a', fontWeight: 900, fontSize: '1.1rem', letterSpacing: '-0.02em', lineHeight: 1.5 }}>
                     {currentItem.text}
                 </Typography>
-                <Typography noWrap sx={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 600 }}>
+                <Typography noWrap sx={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 600, lineHeight: 1.5 }}>
                     {currentItem.subtitle}
                 </Typography>
             </Box>
@@ -244,11 +287,6 @@ export default function Layout() {
                             <PublicIcon fontSize="small" />
                         </IconButton>
                     </Tooltip>
-                    <Tooltip title={t('layout.tools.version')}>
-                        <IconButton size="small" sx={{ color: '#94a3b8', '&:hover': { color: '#6366f1', bgcolor: '#f8fafc' } }}>
-                            <WifiTetheringIcon fontSize="small" />
-                        </IconButton>
-                    </Tooltip>
                     
                     {/* Language Switcher */}
                     <Tooltip title="Switch Language">
@@ -260,6 +298,64 @@ export default function Layout() {
                             <LanguageIcon fontSize="small" />
                         </IconButton>
                     </Tooltip>
+                    {/* User Profile Menu (Replaces WifiTetheringIcon) */}
+                    <Tooltip title="Account Settings">
+                        <IconButton 
+                            size="small" 
+                            onClick={handleUserClick}
+                            sx={{ 
+                                color: '#94a3b8', 
+                                '&:hover': { color: '#6366f1', bgcolor: '#f8fafc' },
+                                border: '1px solid transparent',
+                                '&.Mui-focusVisible': { borderColor: '#6366f1' }
+                            }}
+                        >
+                            <Avatar sx={{ width: 24, height: 24, fontSize: '0.7rem', bgcolor: '#4f46e5' }}>
+                                {username.charAt(0).toUpperCase()}
+                            </Avatar>
+                        </IconButton>
+                    </Tooltip>
+                    <Menu
+                        anchorEl={userAnchorEl}
+                        open={userOpen}
+                        onClose={handleUserClose}
+                        onClick={handleUserClose}
+                        PaperProps={{
+                            elevation: 0,
+                            sx: {
+                                overflow: 'visible',
+                                filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.1))',
+                                mt: 1.5,
+                                '& .MuiAvatar-root': { width: 32, height: 32, ml: -0.5, mr: 1 },
+                                '&:before': {
+                                    content: '""',
+                                    display: 'block',
+                                    position: 'absolute',
+                                    top: 0,
+                                    right: 14,
+                                    width: 10,
+                                    height: 10,
+                                    bgcolor: 'background.paper',
+                                    transform: 'translateY(-50%) rotate(45deg)',
+                                    zIndex: 0,
+                                },
+                            },
+                        }}
+                        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+                        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+                    >
+                        <MenuItem>
+                            <ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>
+                            Profile
+                        </MenuItem>
+                        <Divider />
+                        <MenuItem onClick={handleLogout} sx={{ color: '#ef4444' }}>
+                            <ListItemIcon><LogoutIcon fontSize="small" sx={{ color: '#ef4444' }} /></ListItemIcon>
+                            Logout
+                        </MenuItem>
+                    </Menu>
+                    
+                    
                     <Menu
                         anchorEl={anchorEl}
                         open={open}
@@ -271,12 +367,7 @@ export default function Layout() {
                                 overflow: 'visible',
                                 filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.1))',
                                 mt: 1.5,
-                                '& .MuiAvatar-root': {
-                                    width: 32,
-                                    height: 32,
-                                    ml: -0.5,
-                                    mr: 1,
-                                },
+                                '& .MuiAvatar-root': { width: 32, height: 32, ml: -0.5, mr: 1 },
                                 '&:before': {
                                     content: '""',
                                     display: 'block',

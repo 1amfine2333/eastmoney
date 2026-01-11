@@ -97,7 +97,7 @@ class GoldSilverAnalyst:
             output.append(f"{idx}. [{title}]({url})")
         return "\n".join(output)
 
-    def analyze(self, asset_type: str = "gold") -> str:
+    def analyze(self, asset_type: str = "gold", user_id: int = None) -> str:
         """
         Main analysis pipeline.
         asset_type: 'gold' or 'silver'
@@ -106,7 +106,7 @@ class GoldSilverAnalyst:
         symbol = "GC=F" if asset_type.lower() == "gold" else "SI=F"
         
         print(f"\n{'='*60}")
-        print(f"🏆 Starting Deep Analysis for {asset_name}...")
+        print(f"🏆 Starting Deep Analysis for {asset_name} (User: {user_id})...")
         print(f"{ '='*60}")
         
         # 1. Data Collection
@@ -221,8 +221,14 @@ class GoldSilverAnalyst:
         # Append Sources
         report += self._format_sources(news_results)
         
-        # Save
-        output_dir = "reports/commodities"
+        # Save logic updated for user isolation
+        # src/analysis/commodities/gold_silver.py -> src/analysis/commodities -> src/analysis -> src -> root
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        if user_id:
+            output_dir = os.path.join(base_dir, "reports", str(user_id), "commodities")
+        else:
+            output_dir = os.path.join(base_dir, "reports", "commodities")
+            
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
             

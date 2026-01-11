@@ -1,7 +1,8 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
-from typing import Dict
+import asyncio
+from typing import Dict, Optional
 from src.storage.db import get_active_funds, get_fund_by_code
 from src.analysis.pre_market import PreMarketAnalyst
 from src.analysis.post_market import PostMarketAnalyst
@@ -25,29 +26,32 @@ class SchedulerManager:
         self.refresh_all_jobs()
         
     def refresh_all_jobs(self):
-        """Clear all and reload from DB"""
+        """Clear all and reload from DB (All users)"""
         self.scheduler.remove_all_jobs()
-        funds = get_active_funds()
+        # Fetch ALL active funds from ALL users
+        funds = get_active_funds(user_id=None) 
         for fund in funds:
             self.add_fund_jobs(fund)
 
     def add_fund_jobs(self, fund: Dict):
         """Add Pre/Post market jobs for a single fund"""
         code = fund['code']
+        # Ensure we have user_id, fallback to None (Admin/Legacy)
+        user_id = fund.get('user_id') 
         
         # Pre-market
         if fund.get('pre_market_time'):
             try:
                 hour, minute = fund['pre_market_time'].split(':')
-                job_id = f"pre_{code}"
+                job_id = f"pre_{code}_{user_id}"
                 self.scheduler.add_job(
                     self.run_analysis_task,
                     trigger=CronTrigger(hour=hour, minute=minute),
                     id=job_id,
-                    args=[code, 'pre'],
+                    args=[code, 'pre', user_id],
                     replace_existing=True
                 )
-                print(f"Scheduled PRE-market for {code} at {hour}:{minute}")
+                print(f"Scheduled PRE-market for {code} (User {user_id}) at {hour}:{minute}")
             except Exception as e:
                 print(f"Error scheduling PRE task for {code}: {e}")
 
@@ -55,38 +59,47 @@ class SchedulerManager:
         if fund.get('post_market_time'):
             try:
                 hour, minute = fund['post_market_time'].split(':')
-                job_id = f"post_{code}"
+                job_id = f"post_{code}_{user_id}"
                 self.scheduler.add_job(
                     self.run_analysis_task,
                     trigger=CronTrigger(hour=hour, minute=minute),
                     id=job_id,
-                    args=[code, 'post'],
+                    args=[code, 'post', user_id],
                     replace_existing=True
                 )
-                print(f"Scheduled POST-market for {code} at {hour}:{minute}")
+                print(f"Scheduled POST-market for {code} (User {user_id}) at {hour}:{minute}")
             except Exception as e:
                 print(f"Error scheduling POST task for {code}: {e}")
 
     def remove_fund_jobs(self, code: str):
-        """Remove jobs for a fund"""
-        for mode in ['pre', 'post']:
-            job_id = f"{mode}_{code}"
-            if self.scheduler.get_job(job_id):
-                self.scheduler.remove_job(job_id)
-                print(f"Removed job {job_id}")
+        """
+        Remove jobs for a fund. 
+        Note: This naive implementation removes jobs matching ID pattern.
+        """
+        # We need to find jobs starting with pre_{code}_ or post_{code}_
+        # Iterate all jobs and match
+        for job in self.scheduler.get_jobs():
+            if job.id.startswith(f"pre_{code}_") or job.id.startswith(f"post_{code}_"):
+                self.scheduler.remove_job(job.id)
+                print(f"Removed job {job.id}")
 
-    def run_analysis_task(self, fund_code: str, mode: str):
+    def run_analysis_task(self, fund_code: str, mode: str, user_id: Optional[int] = None):
         """Worker function"""
-        print(f"Executing {mode.upper()}-market task for {fund_code}...")
+        print(f"Executing {mode.upper()}-market task for {fund_code} (User: {user_id})...")
         
-        # Re-fetch fund data to ensure latest config
-        fund = get_fund_by_code(fund_code)
-        if not fund or not fund['is_active']:
+        # Re-fetch fund data. Pass user_id if we want to be strict, or None to find by code globally.
+        # But wait, code might not be unique globally anymore. We MUST filter by user_id if we have it.
+        fund = get_fund_by_code(fund_code, user_id=user_id)
+        
+        if not fund or not fund.get('is_active'):
             print(f"Fund {fund_code} is inactive or deleted. Skipping.")
             return
 
         report = ""
         try:
+            # Run analysis in thread to avoid blocking scheduler (though scheduler is threaded by default, good practice)
+            # Actually apscheduler runs in thread/process pool executor.
+            
             if mode == 'pre':
                 analyst = PreMarketAnalyst()
                 report = analyst.analyze_fund(fund)
@@ -95,12 +108,12 @@ class SchedulerManager:
                 report = analyst.analyze_fund(fund)
             
             if report:
-                # Need to implement file naming logic in save_report to handle individual funds
-                save_report(report, mode, fund['name'], fund['code'])
+                save_report(report, mode, fund['name'], fund['code'], user_id=user_id)
                 
         except Exception as e:
             logger.error(f"Task failed for {fund_code}: {e}")
-            print(f"Task failed for {fund_code}: {e}")
+            import traceback
+            traceback.print_exc()
 
 # Global instance
 scheduler_manager = SchedulerManager()
