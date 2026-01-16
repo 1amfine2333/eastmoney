@@ -483,14 +483,20 @@ async def generate_report_endpoint(mode: str, request: GenerateRequest = None, c
         print(f"Generating {mode}-market report for User {current_user.id}... (Fund: {fund_code if fund_code else 'ALL'})")
         
         if fund_code:
-            scheduler_manager.run_analysis_task(fund_code, mode, user_id=current_user.id)
+            # Run analysis in a thread to avoid blocking the event loop
+            # Note: This will still block the HTTP response until completion.
+            # For true async (fire-and-forget), use BackgroundTasks.
+            # But here the user likely wants to wait for completion? 
+            # The current implementation returns a message *after* completion (sync).
+            # So we use await asyncio.to_thread to keep server responsive for others.
+            await asyncio.to_thread(scheduler_manager.run_analysis_task, fund_code, mode, user_id=current_user.id)
             return {"status": "success", "message": f"Task triggered for {fund_code}"}
         else:
             funds = get_active_funds(user_id=current_user.id)
             results = []
             for fund in funds:
                 try:
-                    scheduler_manager.run_analysis_task(fund['code'], mode, user_id=current_user.id)
+                    await asyncio.to_thread(scheduler_manager.run_analysis_task, fund['code'], mode, user_id=current_user.id)
                     results.append(fund['code'])
                 except:
                     pass
@@ -542,18 +548,23 @@ def get_market_indices():
             "上证指数", "深证成指", "创业板指",
             "恒生指数", "日经225", "纳斯达克", "标普500"
         ]
-        results = []
         
-        for name in target_names:
-            row = indices_df[indices_df['名称'] == name]
-            if not row.empty:
+        # Optimize: Filter dataframe first
+        if not indices_df.empty:
+            filtered_df = indices_df[indices_df['名称'].isin(target_names)]
+            
+            # Convert to list of dicts directly
+            results = []
+            for _, row in filtered_df.iterrows():
                 results.append({
-                    "name": name,
-                    "code": str(row.iloc[0].get('代码', '')),
-                    "price": float(row.iloc[0]['最新价']),
-                    "change_pct": float(row.iloc[0]['涨跌幅']),
-                    "change_val": float(row.iloc[0]['涨跌额'])
+                    "name": row['名称'],
+                    "code": str(row.get('代码', '')),
+                    "price": float(row['最新价']),
+                    "change_pct": float(row['涨跌幅']),
+                    "change_val": float(row['涨跌额'])
                 })
+        else:
+            results = []
         
         data = sanitize_data(results)
         
@@ -975,7 +986,7 @@ async def analyze_stock_endpoint(code: str, request: StockAnalyzeRequest, curren
             raise HTTPException(status_code=404, detail=f"Stock {code} not found")
 
         print(f"Triggering {request.mode}-market analysis for stock {code} (User: {current_user.id})")
-        scheduler_manager.run_stock_analysis_task(code, request.mode, user_id=current_user.id)
+        await asyncio.to_thread(scheduler_manager.run_stock_analysis_task, code, request.mode, user_id=current_user.id)
         return {"status": "success", "message": f"Stock {request.mode}-market analysis triggered for {code}"}
     except HTTPException:
         raise

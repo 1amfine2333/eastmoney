@@ -102,26 +102,25 @@ def get_us_market_overview() -> Dict:
         # 使用全球指数接口获取美股三大指数
         df = ak.index_global_spot_em()
         if not df.empty:
-            # 美股三大指数代码
-            us_indices = {
-                '道琼斯': 'DJIA',
-                '纳斯达克': 'NDX', 
-                '标普500': 'SPX'
-            }
+            # 美股三大指数映射 (Name -> Code for reference, but here we search by Name)
+            # Actually index_global_spot_em has '名称' column.
+            # We want to match these names:
+            target_names = ['道琼斯', '纳斯达克', '标普500']
             
-            for name, code in us_indices.items():
-                row = df[df['代码'] == code]
-                if not row.empty:
-                    r = row.iloc[0]
-                    result[name] = {
-                        '最新价': r.get('最新价', 'N/A'),
-                        '涨跌额': r.get('涨跌额', 'N/A'),
-                        '涨跌幅': f"{r.get('涨跌幅', 0)}%",
-                        '开盘价': r.get('开盘价', 'N/A'),
-                        '最高价': r.get('最高价', 'N/A'),
-                        '最低价': r.get('最低价', 'N/A'),
-                        '更新时间': r.get('最新行情时间', 'N/A')
-                    }
+            # Optimized: Filter dataframe directly
+            filtered_df = df[df['名称'].isin(target_names)]
+            
+            for _, r in filtered_df.iterrows():
+                name = r['名称']
+                result[name] = {
+                    '最新价': r.get('最新价', 'N/A'),
+                    '涨跌额': r.get('涨跌额', 'N/A'),
+                    '涨跌幅': f"{r.get('涨跌幅', 0)}%",
+                    '开盘价': r.get('开盘价', 'N/A'),
+                    '最高价': r.get('最高价', 'N/A'),
+                    '最低价': r.get('最低价', 'N/A'),
+                    '更新时间': r.get('最新行情时间', 'N/A')
+                }
     except Exception as e:
         print(f"Error fetching US market: {e}")
     
@@ -138,20 +137,18 @@ def get_a50_futures() -> Dict:
         df = ak.index_global_spot_em()
         if not df.empty:
             # 获取相关亚太指数
-            targets = {
-                '恒生指数': 'HSI',
-                '富时新加坡海峡时报': 'STI',
-                '日经225': 'N225'
-            }
-            for name, code in targets.items():
-                row = df[df['代码'] == code]
-                if not row.empty:
-                    r = row.iloc[0]
-                    result[name] = {
-                        '最新价': r.get('最新价', 'N/A'),
-                        '涨跌幅': r.get('涨跌幅', 'N/A'),
-                        '更新时间': r.get('最新行情时间', 'N/A')
-                    }
+            target_names = ['恒生指数', '富时新加坡海峡时报', '日经225']
+            
+            # Optimized filtering
+            filtered_df = df[df['名称'].isin(target_names)]
+            
+            for _, r in filtered_df.iterrows():
+                name = r['名称']
+                result[name] = {
+                    '最新价': r.get('最新价', 'N/A'),
+                    '涨跌幅': r.get('涨跌幅', 'N/A'),
+                    '更新时间': r.get('最新行情时间', 'N/A')
+                }
     except Exception as e:
         print(f"Error fetching A50/Asia index: {e}")
     
