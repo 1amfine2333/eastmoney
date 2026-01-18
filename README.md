@@ -235,14 +235,93 @@ cd web && npm run build
 
 ## 部署
 
-### 后端 Docker 部署
+### Docker 一体化部署（推荐）
+
+使用 Docker 可以一键部署前后端整合的应用，无需分别配置。
+
+#### 1. 配置环境变量
+
+在项目根目录创建 `.env` 文件：
+
+```env
+# LLM 配置 (至少配置一个)
+GEMINI_API_KEY=your_gemini_api_key
+OPENAI_API_KEY=your_openai_api_key
+
+# 网络搜索
+TAVILY_API_KEY=your_tavily_api_key
+
+# 数据库路径
+DB_FILE_PATH=/app/data/funds.db
+```
+
+#### 2. 使用 Docker Compose 启动
+
+```bash
+# 构建并启动服务
+docker-compose up -d --build
+
+# 查看日志
+docker-compose logs -f
+
+# 查看服务状态
+docker-compose ps
+```
+
+#### 3. 访问应用
+
+打开浏览器访问: http://localhost:9000
+
+#### 4. 常用命令
+
+```bash
+# 停止服务
+docker-compose down
+
+# 重启服务
+docker-compose restart
+
+# 查看实时日志
+docker-compose logs -f app
+
+# 进入容器
+docker-compose exec app bash
+```
+
+#### 5. 使用部署脚本（可选）
+
+**Windows PowerShell:**
+```powershell
+.\deploy.ps1
+```
+
+**Linux/Mac:**
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+#### 6. 数据持久化
+
+Docker 部署会自动挂载以下目录：
+- `./data` - 数据库文件
+- `./reports` - 生成的报告
+- `./config` - 配置文件
+
+更多 Docker 部署细节请参考 [DOCKER_DEPLOY.md](DOCKER_DEPLOY.md)
+
+---
+
+### 传统部署方式
+
+#### 后端 Docker 部署（仅后端）
 
 ```bash
 # 构建镜像 根目录执行
 ./run_docker.sh
 ```
 
-### 前端Nginx 部署
+#### 前端 Nginx 部署
 
 建议使用 Nginx 反向代理部署前端：
 
