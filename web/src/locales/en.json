@@ -286,6 +286,8 @@
       "credentials": "Credentials",
       "gemini_key": "Gemini API Key",
       "openai_key": "OpenAI API Key",
+      "base_url": "API Base URL",
+      "model": "Model Name",
       "provider_help": "Choose the AI model used for report generation."
     },
     "data": {

@@ -118,13 +118,17 @@ export interface SettingsData {
   llm_provider: string;
   gemini_api_key_masked: string;
   openai_api_key_masked: string;
+  openai_base_url?: string;
+  openai_model?: string;
   tavily_api_key_masked: string;
 }
 
 export interface SettingsUpdate {
-  llm_provider?: string;
+  llm_provider: string;
   gemini_api_key?: string;
   openai_api_key?: string;
+  openai_base_url?: string;
+  openai_model?: string;
   tavily_api_key?: string;
 }
 
@@ -193,6 +197,11 @@ export const fetchSettings = async (): Promise<SettingsData> => {
 
 export const saveSettings = async (settings: SettingsUpdate): Promise<void> => {
   await api.post('/settings', settings);
+};
+
+export const fetchLLMModels = async (provider: string, apiKey?: string, baseUrl?: string): Promise<{ models: string[], warning?: string }> => {
+    const response = await api.post('/llm/models', { provider, api_key: apiKey, base_url: baseUrl });
+    return response.data;
 };
 
 export interface SentimentResponse {

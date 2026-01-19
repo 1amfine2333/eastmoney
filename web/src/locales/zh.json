@@ -286,6 +286,8 @@
       "credentials": "凭证",
       "gemini_key": "Gemini API 密钥",
       "openai_key": "OpenAI API 密钥",
+      "base_url": "API 基础地址 (Base URL)",
+      "model": "模型名称 (Model Name)",
       "provider_help": "选择用于生成报告的 AI 模型。"
     },
     "data": {

@@ -32,7 +32,7 @@ import akshare as ak
 import pandas as pd
 from src.auth import Token, UserCreate, User, create_access_token, get_password_hash, verify_password, get_current_user, create_user, get_user_by_username
 from fastapi.security import OAuth2PasswordRequestForm
-
+from openai import OpenAI
 
 def sanitize_for_json(obj):
     """
@@ -62,8 +62,10 @@ def sanitize_for_json(obj):
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
-    print("Starting Scheduler...")
-    scheduler_manager.start()
+    print("Starting Scheduler (Background)...")
+    # Run scheduler init in a separate thread so it doesn't block startup
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, scheduler_manager.start)
     yield
     # Shutdown logic if needed
 
@@ -189,7 +191,14 @@ class SettingsUpdate(BaseModel):
     llm_provider: Optional[str] = None
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_model: Optional[str] = None
     tavily_api_key: Optional[str] = None
+
+class ModelListRequest(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    provider: str = "openai"
 
 class GenerateRequest(BaseModel):
     fund_code: Optional[str] = None
@@ -290,6 +299,45 @@ async def test_search_connection(current_user: User = Depends(get_current_user))
         return {"status": "success", "message": "Search Connection Verified", "results": titles}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/llm/models")
+async def list_llm_models(request: ModelListRequest, current_user: User = Depends(get_current_user)):
+    try:
+        # Prioritize request params, then env vars
+        api_key = request.api_key or os.getenv("OPENAI_API_KEY")
+        base_url = request.base_url or os.getenv("OPENAI_BASE_URL")
+        
+        if not api_key:
+             # Some local servers like Ollama might not require a key if configured loosely, but usually OpenAI client requires something.
+             # If using local provider (oobabooga, etc), often "key" can be anything.
+             if not base_url: # If no base_url and no key, that's a problem for standard OpenAI
+                 pass
+             elif "localhost" in base_url or "127.0.0.1" in base_url:
+                 if not api_key: api_key = "dummy" 
+
+        if not api_key and not (base_url and ("localhost" in base_url or "127.0.0.1" in base_url)):
+             return {"models": [], "warning": "API Key missing"}
+
+        # OpenAI Compatible
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+            
+        client = OpenAI(**client_kwargs)
+        
+        def _fetch():
+            return client.models.list()
+            
+        models_resp = await asyncio.to_thread(_fetch)
+        
+        # Determine model list based on provider or inspection
+        # Standard OpenAI models.list returns a list of objects with .id
+        model_names = sorted([m.id for m in models_resp.data])
+        
+        return {"models": model_names}
+    except Exception as e:
+        print(f"Error listing models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/dashboard/overview")
 async def get_dashboard_overview():
@@ -709,6 +757,8 @@ async def get_settings():
         "llm_provider": env.get("LLM_PROVIDER", "gemini"),
         "gemini_api_key_masked": mask("GEMINI_API_KEY"),
         "openai_api_key_masked": mask("OPENAI_API_KEY"),
+        "openai_base_url": env.get("OPENAI_BASE_URL", ""),
+        "openai_model": env.get("OPENAI_MODEL", ""),
         "tavily_api_key_masked": mask("TAVILY_API_KEY")
     }
 
@@ -721,10 +771,20 @@ async def update_settings(settings: SettingsUpdate):
         updates["GEMINI_API_KEY"] = settings.gemini_api_key
     if settings.openai_api_key:
         updates["OPENAI_API_KEY"] = settings.openai_api_key
+    if settings.openai_base_url is not None:
+         updates["OPENAI_BASE_URL"] = settings.openai_base_url
+    if settings.openai_model is not None:
+         updates["OPENAI_MODEL"] = settings.openai_model
     if settings.tavily_api_key:
         updates["TAVILY_API_KEY"] = settings.tavily_api_key
         
     save_env_file(updates)
+    
+    # Update runtime env
+    for k, v in updates.items():
+        if v is not None:
+            os.environ[k] = v
+
     return {"status": "success"}
 
 @app.post("/api/sentiment/analyze")
@@ -1816,7 +1876,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000, help="Port to bind")
     args = parser.parse_args()
 
-    # Need to run init_db if running directly without lifespan
-    init_db()
-    scheduler_manager.start()
+    # Need to run init_db if running directly explicitly, but uvicorn.run(app) triggers lifespan
+    # so we don't need to manually start scheduler here anymore if using lifespan.
+    
     uvicorn.run(app, host=args.host, port=args.port)
