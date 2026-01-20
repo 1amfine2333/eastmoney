@@ -14,6 +14,7 @@ import {
   Divider,
   InputAdornment,
   MenuItem,
+  Autocomplete,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import KeyIcon from '@mui/icons-material/Key';
@@ -21,7 +22,8 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import LanguageIcon from '@mui/icons-material/Language';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { fetchSettings, saveSettings } from '../api';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import { fetchSettings, saveSettings, fetchLLMModels } from '../api';
 import type { SettingsData } from '../api';
 
 export default function SettingsPage() {
@@ -39,6 +41,12 @@ export default function SettingsPage() {
   const [geminiKey, setGeminiKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [tavilyKey, setTavilyKey] = useState('');
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('');
+  const [openaiModel, setOpenaiModel] = useState('');
+  
+  // Models
+  const [modelList, setModelList] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
   
   const [toast, setToast] = useState<{open: boolean, message: string, severity: 'success'|'error'}>({
     open: false, message: '', severity: 'success'
@@ -53,10 +61,35 @@ export default function SettingsPage() {
     try {
       const data = await fetchSettings();
       setSettings(data);
+      setOpenaiBaseUrl(data.openai_base_url || '');
+      setOpenaiModel(data.openai_model || '');
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true);
+    try {
+        const res = await fetchLLMModels(
+            settings.llm_provider, 
+            openaiKey || undefined, 
+            openaiBaseUrl || undefined
+        );
+        setModelList(res.models);
+        if (res.models.length > 0) {
+             setToast({ open: true, message: `Found ${res.models.length} models`, severity: 'success' });
+             // Only auto-select if empty
+             if (!openaiModel) setOpenaiModel(res.models[0]);
+        } else {
+             setToast({ open: true, message: 'No models returned', severity: 'error' });
+        }
+    } catch (error: any) {
+        setToast({ open: true, message: 'Failed to fetch models: ' + (error.response?.data?.detail || error.message), severity: 'error' });
+    } finally {
+        setFetchingModels(false);
     }
   };
 
@@ -67,6 +100,8 @@ export default function SettingsPage() {
             llm_provider: settings.llm_provider,
             gemini_api_key: geminiKey || undefined,
             openai_api_key: openaiKey || undefined,
+            openai_base_url: openaiBaseUrl || undefined,
+            openai_model: openaiModel || undefined,
             tavily_api_key: tavilyKey || undefined
         });
         setToast({ open: true, message: t('settings.messages.success'), severity: 'success' });
@@ -127,6 +162,7 @@ export default function SettingsPage() {
                         >
                             <MenuItem value="gemini">Google Gemini (Recommended)</MenuItem>
                             <MenuItem value="openai">OpenAI (GPT-4)</MenuItem>
+                            <MenuItem value="openai_compatible">OpenAI Compatible (Custom)</MenuItem>
                         </TextField>
                     </div>
                     
@@ -167,9 +203,48 @@ export default function SettingsPage() {
                                     <InputAdornment position="end"><CheckCircleIcon color="success" fontSize="small"/></InputAdornment>
                                 )
                             }}
-                            disabled={settings.llm_provider !== 'openai' && !openaiKey}
+                            disabled={settings.llm_provider !== 'openai' && settings.llm_provider !== 'openai_compatible' && !openaiKey}
                         />
                     </div>
+
+                    {(settings.llm_provider === 'openai' || settings.llm_provider === 'openai_compatible') && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                             <TextField 
+                                fullWidth 
+                                label={t('settings.llm.base_url') || "API Base URL"}
+                                placeholder="https://api.openai.com/v1"
+                                value={openaiBaseUrl}
+                                onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+                                helperText="Override default OpenAI endpoint"
+                            />
+                            <div className="flex gap-2 items-start">
+                                <Autocomplete
+                                    freeSolo
+                                    fullWidth
+                                    options={modelList}
+                                    value={openaiModel}
+                                    onInputChange={(_, newValue) => setOpenaiModel(newValue)}
+                                    renderInput={(params) => (
+                                        <TextField 
+                                            {...params}
+                                            label={t('settings.llm.model') || "Model Name"}
+                                            placeholder="gpt-4o"
+                                            helperText="e.g. gpt-4o, deepseek-chat"
+                                        />
+                                    )}
+                                />
+                                <Button 
+                                    variant="outlined" 
+                                    sx={{ height: 56, minWidth: 56 }}
+                                    onClick={handleFetchModels}
+                                    disabled={fetchingModels || (!openaiKey && !settings.openai_api_key_masked && !openaiBaseUrl)}
+                                    title="Fetch Models"
+                                >
+                                    {fetchingModels ? <CircularProgress size={24} /> : <RefreshIcon />}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </CardContent>
         </Card>

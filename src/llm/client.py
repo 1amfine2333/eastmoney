@@ -19,17 +19,21 @@ class BaseLLMClient(ABC):
 
 class GoogleGeminiClient(BaseLLMClient):
     def __init__(self):
-        if not GEMINI_API_KEY:
+        api_key = os.getenv("GEMINI_API_KEY")
+        api_endpoint = os.getenv("GEMINI_API_ENDPOINT")
+        model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+
+        if not api_key:
             raise ValueError("GEMINI_API_KEY is not set in environment variables.")
         
-        client_kwargs = {"api_key": GEMINI_API_KEY}
+        client_kwargs = {"api_key": api_key}
         
         # Configure custom endpoint if provided
-        if GEMINI_API_ENDPOINT:
-            client_kwargs["http_options"] = {"base_url": GEMINI_API_ENDPOINT, "api_version": "v1alpha"}
+        if api_endpoint:
+            client_kwargs["http_options"] = {"base_url": api_endpoint, "api_version": "v1alpha"}
             
         self.client = genai.Client(**client_kwargs)
-        self.model_name = GEMINI_MODEL
+        self.model_name = model
 
     def generate_content(self, prompt: str) -> str:
         try:
@@ -46,15 +50,19 @@ class GoogleGeminiClient(BaseLLMClient):
 
 class OpenAIClient(BaseLLMClient):
     def __init__(self):
-        if not OPENAI_API_KEY:
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL")
+        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+        if not api_key:
             raise ValueError("OPENAI_API_KEY is not set in environment variables.")
         
-        client_kwargs = {"api_key": OPENAI_API_KEY}
-        if OPENAI_BASE_URL:
-            client_kwargs["base_url"] = OPENAI_BASE_URL
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
             
         self.client = OpenAI(**client_kwargs)
-        self.model_name = OPENAI_MODEL
+        self.model_name = model
 
     def generate_content(self, prompt: str) -> str:
         try:
@@ -74,11 +82,11 @@ def get_llm_client() -> BaseLLMClient:
     """
     Factory function to return the configured LLM client.
     """
-    provider = LLM_PROVIDER.lower()
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
     
     if provider == "gemini":
         return GoogleGeminiClient()
-    elif provider == "openai":
+    elif provider == "openai" or provider == "openai_compatible":
         return OpenAIClient()
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")

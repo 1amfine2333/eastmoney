@@ -7,7 +7,7 @@ from datetime import datetime
 
 # Add project root to sys.path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from config.settings import TAVILY_API_KEY
+# from config.settings import TAVILY_API_KEY # Unused, we use os.getenv now for dynamic updates
 
 class WebSearch:
     """
@@ -43,19 +43,36 @@ class WebSearch:
     @classmethod
     def _ensure_initialized(cls):
         with cls._lock:
-            if cls._initialized:
-                return
+            # Always check env var to see if it was updated at runtime
+            api_key = os.getenv("TAVILY_API_KEY")
 
-            if not TAVILY_API_KEY:
-                raise ValueError("TAVILY_API_KEY is not set in environment variables.")
+            if cls._initialized and cls._clients:
+                # If already initialized and we have clients, check if key is still the same? 
+                # For simplicity, if we have clients, we assume we are good.
+                # But if user updated key, we might want to reload.
+                # Let's just create new clients if key is present and we have none, or allow re-init if needed.
+                # For now, let's stick to lazy init, but if key was missing before and now exists, we should proceed.
+                pass
+            
+            if not api_key:
+                print("WARNING: TAVILY_API_KEY is not set. Web search capabilities will be disabled.")
+                cls._clients = []
+                cls._initialized = True
+                return
             
             # Support multiple keys separated by comma
-            keys = [k.strip() for k in TAVILY_API_KEY.split(',') if k.strip()]
+            keys = [k.strip() for k in api_key.split(',') if k.strip()]
             if not keys:
-                raise ValueError("No valid TAVILY_API_KEY found.")
-                
-            cls._clients = [TavilyClient(api_key=key) for key in keys]
-            print(f"WebSearch initialized with {len(keys)} Tavily keys (Shared Pool).")
+                print("WARNING: No valid TAVILY_API_KEY found. Web search capabilities will be disabled.")
+                cls._clients = []
+            else:
+                # Check if we need to re-initialize (e.g. key changed)
+                # Comparing current clients' keys with new keys is complicated because TavilyClient masks key?
+                # Simpler approach: Re-create clients if the key string is different or if we had no clients.
+                # Since we don't store the raw key string, let's just re-create.
+                cls._clients = [TavilyClient(api_key=key) for key in keys]
+                print(f"WebSearch initialized with {len(keys)} Tavily keys (Shared Pool).")
+            
             cls._initialized = True
 
     def _safe_search(self, search_func) -> Dict:
@@ -71,8 +88,21 @@ class WebSearch:
             # 1. Get a client safely
             with self._lock:
                 if not self._clients:
-                    print("CRITICAL: All Tavily API keys are exhausted.")
-                    return {}
+                    # Try to re-initialize if keys were added at runtime
+                    self._initialized = False # Force check
+                    self._ensure_initialized()
+                    
+                    if not self._clients:
+                        if not os.getenv("TAVILY_API_KEY"):
+                             # Silent return if never configured
+                             return {}
+                        print("CRITICAL: All Tavily API keys are exhausted or invalid.")
+                        return {}
+                
+                # Check list again after potential re-init
+                if not self._clients:
+                     return {}
+                     
                 client = self._clients[0]
             
             try:
