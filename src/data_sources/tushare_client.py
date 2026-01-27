@@ -991,6 +991,174 @@ def get_chip_performance(ts_code: str) -> Optional[pd.DataFrame]:
     return df
 
 
+def get_realtime_quotes(ts_codes: list) -> Optional[pd.DataFrame]:
+    """
+    Get real-time stock quotes for multiple stocks.
+
+    This uses tushare's realtime quote API which provides current market data.
+
+    Args:
+        ts_codes: List of stock codes (can be plain codes like '600519' or with suffix like '600519.SH')
+
+    Returns:
+        DataFrame with realtime data: ts_code, name, price, pct_chg, vol, amount, etc.
+    """
+    import tushare as ts
+
+    if not ts_codes:
+        return None
+
+    # Normalize codes - tushare realtime needs plain codes without suffix
+    plain_codes = []
+    for code in ts_codes:
+        plain_code = denormalize_ts_code(code)
+        plain_codes.append(plain_code)
+
+    try:
+        # Use tushare's realtime_quote function (free API, no points required)
+        # This returns DataFrame with columns: TS_CODE, NAME, PRICE, PCT_CHG, VOL, etc.
+        df = ts.realtime_quote(ts_code=','.join(plain_codes))
+
+        if df is not None and not df.empty:
+            # Normalize column names to lowercase for consistency
+            df.columns = [col.lower() for col in df.columns]
+            return df
+
+        return df
+
+    except Exception as e:
+        print(f"Error fetching realtime quotes: {e}")
+        return None
+
+
+def get_realtime_quote_single(stock_code: str) -> Optional[Dict[str, Any]]:
+    """
+    Get real-time quote for a single stock.
+
+    Args:
+        stock_code: Stock code (plain or with suffix)
+
+    Returns:
+        Dict with quote data: price, pct_chg, vol, amount, open, high, low, pre_close
+    """
+    df = get_realtime_quotes([stock_code])
+
+    if df is None or df.empty:
+        return None
+
+    row = df.iloc[0]
+
+    return {
+        'ts_code': row.get('ts_code', ''),
+        'name': row.get('name', ''),
+        'price': float(row.get('price', 0)) if pd.notna(row.get('price')) else None,
+        'pct_chg': float(row.get('pct_chg', 0)) if pd.notna(row.get('pct_chg')) else None,
+        'vol': float(row.get('vol', 0)) if pd.notna(row.get('vol')) else None,
+        'amount': float(row.get('amount', 0)) if pd.notna(row.get('amount')) else None,
+        'open': float(row.get('open', 0)) if pd.notna(row.get('open')) else None,
+        'high': float(row.get('high', 0)) if pd.notna(row.get('high')) else None,
+        'low': float(row.get('low', 0)) if pd.notna(row.get('low')) else None,
+        'pre_close': float(row.get('pre_close', 0)) if pd.notna(row.get('pre_close')) else None,
+    }
+
+
+# Fund search cache
+_fund_basic_cache: Optional[pd.DataFrame] = None
+_fund_basic_cache_time: Optional[datetime] = None
+
+
+def get_all_funds_tushare(market: str = 'E') -> Optional[pd.DataFrame]:
+    """
+    Get all fund basic info from TuShare with caching.
+
+    Args:
+        market: Market type (E=场内ETF/LOF, O=场外)
+
+    Returns:
+        DataFrame with fund basic info: ts_code, name, management, type, etc.
+    """
+    global _fund_basic_cache, _fund_basic_cache_time
+
+    # Check cache (valid for 24 hours)
+    if _fund_basic_cache is not None and _fund_basic_cache_time is not None:
+        cache_age = (datetime.now() - _fund_basic_cache_time).total_seconds()
+        if cache_age < 86400:  # 24 hours
+            return _fund_basic_cache
+
+    try:
+        pro = _get_tushare_pro()
+
+        # Fetch both on-exchange (E) and off-exchange (O) funds
+        dfs = []
+
+        for m in ['E', 'O']:
+            try:
+                df = pro.fund_basic(
+                    market=m,
+                    fields='ts_code,name,management,custodian,fund_type,found_date,due_date,list_date,issue_date,delist_date,issue_amount,m_fee,c_fee,duration,min_amount,exp_return,benchmark,status,invest_type,type,trustee,purc_startdate,redm_startdate,market'
+                )
+                if df is not None and not df.empty:
+                    dfs.append(df)
+            except Exception as e:
+                print(f"Failed to fetch fund_basic for market {m}: {e}")
+
+        if dfs:
+            _fund_basic_cache = pd.concat(dfs, ignore_index=True)
+            _fund_basic_cache_time = datetime.now()
+            return _fund_basic_cache
+
+        return None
+
+    except Exception as e:
+        print(f"Error fetching fund basic: {e}")
+        return None
+
+
+def search_funds_tushare(query: str, limit: int = 50) -> list:
+    """
+    Search funds by code or name using TuShare data.
+
+    Args:
+        query: Search query (fund code or name)
+        limit: Maximum number of results
+
+    Returns:
+        List of fund dicts with code, name, type fields
+    """
+    if not query or len(query) < 2:
+        return []
+
+    df = get_all_funds_tushare()
+
+    if df is None or df.empty:
+        return []
+
+    query_lower = query.lower()
+    results = []
+
+    for _, row in df.iterrows():
+        ts_code = str(row.get('ts_code', ''))
+        name = str(row.get('name', ''))
+        fund_type = str(row.get('fund_type', '')) or str(row.get('type', ''))
+
+        # Extract plain code (remove .OF/.SH/.SZ suffix)
+        plain_code = ts_code.split('.')[0] if '.' in ts_code else ts_code
+
+        # Match by code prefix or name contains
+        if plain_code.startswith(query) or query_lower in name.lower():
+            results.append({
+                'code': plain_code,
+                'name': name,
+                'type': fund_type,
+                'ts_code': ts_code,
+            })
+
+            if len(results) >= limit:
+                break
+
+    return results
+
+
 if __name__ == "__main__":
     # Test the connection
     print("Testing TuShare Pro connection...")

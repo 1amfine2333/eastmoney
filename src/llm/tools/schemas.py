@@ -234,6 +234,36 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             },
             "required": ["query"]
         }
+    },
+
+    "run_portfolio_stress_test": {
+        "description": "对投资组合运行压力测试。当用户询问'如果...会怎样'、'利率上升/下降影响'、'汇率变化对组合影响'等风险情景问题时使用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "portfolio_id": {
+                    "type": "integer",
+                    "description": "组合ID（从上下文获取）"
+                },
+                "interest_rate_change_bp": {
+                    "type": "number",
+                    "description": "利率变化（基点），如加息75个基点填75，降息50个基点填-50"
+                },
+                "fx_change_pct": {
+                    "type": "number",
+                    "description": "汇率变化（百分比），人民币贬值3%填-3，升值2%填2"
+                },
+                "index_change_pct": {
+                    "type": "number",
+                    "description": "指数/大盘变化（百分比），下跌8%填-8，上涨5%填5"
+                },
+                "oil_change_pct": {
+                    "type": "number",
+                    "description": "油价变化（百分比），上涨15%填15，下跌10%填-10"
+                }
+            },
+            "required": ["portfolio_id"]
+        }
     }
 }
 

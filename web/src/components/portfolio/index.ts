@@ -26,3 +26,9 @@ export { default as CorrelationHeatmap } from './CorrelationHeatmap';
 export { default as AISignalCell } from './AISignalCell';
 export { default as AISignalDrawer } from './AISignalDrawer';
 export { default as SmartPositionTable } from './SmartPositionTable';
+
+// Returns Analysis Components
+export { default as ReturnsOverview } from './ReturnsOverview';
+export { default as ReturnsCalendar } from './ReturnsCalendar';
+export { default as DailyReturnsDetail } from './DailyReturnsDetail';
+export { default as DailyReturnsExplanation } from './DailyReturnsExplanation';

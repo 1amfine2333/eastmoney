@@ -73,29 +73,16 @@ class RiskMetricsCalculator:
             return self._empty_risk_summary("Insufficient aligned data")
 
         # Calculate metrics
-        beta = self._calculate_beta(portfolio_returns, benchmark_returns)
-        sharpe = self._calculate_sharpe(portfolio_returns)
+        
         var_95 = self._calculate_var(portfolio_returns, total_value)
         volatility = self._calculate_volatility(portfolio_returns)
         max_drawdown = self._calculate_max_drawdown(portfolio_returns)
 
-        # Calculate health score (0-100)
-        health_score = self._calculate_health_score(
-            beta, sharpe, var_95 / total_value if total_value > 0 else 0,
-            max_drawdown, len(positions)
-        )
-
         return {
-            "beta": round(beta, 3),
-            "beta_status": self._get_beta_status(beta),
-            "sharpe_ratio": round(sharpe, 3),
-            "sharpe_status": self._get_sharpe_status(sharpe),
             "var_95": round(var_95, 2),
             "var_95_pct": round(var_95 / total_value * 100, 2) if total_value > 0 else 0,
             "volatility": round(volatility * 100, 2),
             "max_drawdown": round(max_drawdown * 100, 2),
-            "health_score": round(health_score),
-            "health_grade": self._get_health_grade(health_score),
             "total_value": round(total_value, 2),
             "position_count": len(positions),
             "analysis_days": len(portfolio_returns),

@@ -32,6 +32,7 @@ const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
     const endValue = value;
     const startTime = Date.now();
     const durationMs = duration * 1000;
+    let animationId: number;
 
     const animate = () => {
       const elapsed = Date.now() - startTime;
@@ -44,13 +45,20 @@ const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
       setDisplayValue(currentValue);
 
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        animationId = requestAnimationFrame(animate);
       } else {
         previousValue.current = endValue;
       }
     };
 
-    requestAnimationFrame(animate);
+    animationId = requestAnimationFrame(animate);
+
+    // Cleanup: cancel animation frame on unmount or value change
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
   }, [value, duration]);
 
   const fontSize = {

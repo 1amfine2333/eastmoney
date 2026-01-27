@@ -617,48 +617,44 @@ async def delete_commodity_report(filename: str, current_user: User = Depends(ge
 
 @app.get("/api/market-funds")
 async def search_market_funds(query: str = ""):
-    funds = []
-    
-    if os.path.exists(MARKET_FUNDS_CACHE):
-        try:
-            mtime = os.path.getmtime(MARKET_FUNDS_CACHE)
-            if (datetime.now().timestamp() - mtime) < 86400:
+    """
+    Search funds using TuShare data.
+    Returns list of funds matching the query by code or name.
+    """
+    if not query or len(query) < 2:
+        return []
+
+    try:
+        results = search_funds_tushare(query, limit=50)
+        return results
+    except Exception as e:
+        print(f"TuShare fund search error: {e}")
+        # Fallback to cached akshare data if available
+        funds = []
+        if os.path.exists(MARKET_FUNDS_CACHE):
+            try:
                 with open(MARKET_FUNDS_CACHE, 'r', encoding='utf-8') as f:
                     funds = json.load(f)
-        except Exception as e:
-            print(f"Cache read error: {e}")
-    
-    if not funds:
-        print("Fetching fresh fund list from AkShare...")
-        funds = get_all_fund_list()
-        if funds:
-            try:
-                if not os.path.exists(CONFIG_DIR):
-                    os.makedirs(CONFIG_DIR)
-                with open(MARKET_FUNDS_CACHE, 'w', encoding='utf-8') as f:
-                    json.dump(funds, f, ensure_ascii=False)
-            except Exception as e:
-                print(f"Cache write error: {e}")
-            
-    if not query:
-        return funds[:20]
-        
-    query = query.lower()
-    results = []
-    for f in funds:
-        f_code = str(f.get('code', ''))
-        f_name = str(f.get('name', ''))
-        f_pinyin = str(f.get('pinyin', ''))
-        
-        if (f_code.startswith(query) or 
-            query in f_name.lower() or 
-            query in f_pinyin.lower()):
-            results.append(f)
-            
-            if len(results) >= 50:
-                break
-                
-    return results
+            except Exception as cache_error:
+                print(f"Cache read error: {cache_error}")
+
+        if not funds:
+            return []
+
+        query_lower = query.lower()
+        results = []
+        for f in funds:
+            f_code = str(f.get('code', ''))
+            f_name = str(f.get('name', ''))
+            f_pinyin = str(f.get('pinyin', ''))
+
+            if (f_code.startswith(query) or
+                query_lower in f_name.lower() or
+                query_lower in f_pinyin.lower()):
+                results.append(f)
+                if len(results) >= 50:
+                    break
+        return results
 
 @app.post("/api/generate/{mode}")
 async def generate_report_endpoint(mode: str, request: GenerateRequest = None, current_user: User = Depends(get_current_user)):
@@ -1114,46 +1110,91 @@ _recommendation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix=
 async def get_stocks_endpoint(current_user: User = Depends(get_current_user)):
     try:
         stocks = get_all_stocks(user_id=current_user.id)
-        
-        def fetch_single_quote(stock):
-            item = dict(stock)
-            try:
-                # Use stock_bid_ask_em for fast single stock query
-                # This returns a DF with [item, value] columns
-                df = ak.stock_bid_ask_em(symbol=stock['code'])
-                if not df.empty:
-                    info = dict(zip(df['item'], df['value']))
-                    
-                    # Try keys from stock_bid_ask_em (Commonly: 最新, 涨幅, 总手)
-                    price = info.get('最新') or info.get('最新价')
-                    change = info.get('涨幅') or info.get('涨跌幅')
-                    vol = info.get('总手') or info.get('成交量')
-                    
-                    # Safe conversion
-                    if price is not None and str(price) != '': 
-                        item['price'] = float(price)
-                    if change is not None and str(change) != '': 
-                        item['change_pct'] = float(change)
-                    if vol is not None and str(vol) != '': 
-                        v = float(vol)
-                        # If came from '总手' (Hands), convert to shares for consistency
-                        if info.get('总手') is not None:
-                            v = v * 100
-                        item['volume'] = v
-            except Exception:
-                # Silently fail for individual stock fetch errors to not break the whole list
-                pass
-            return StockItem(**item)
 
-        # Execute in parallel
-        # Note: akshare calls are blocking/sync, so ThreadPool is appropriate
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=10) as executor:
-             results = await loop.run_in_executor(None, lambda: list(executor.map(fetch_single_quote, stocks)))
-             
-        return results
+        if not stocks:
+            return []
+
+        # Batch fetch realtime quotes using tushare (more reliable than akshare)
+        try:
+            from src.data_sources.tushare_client import get_realtime_quotes
+
+            # Get all stock codes
+            stock_codes = [s['code'] for s in stocks]
+
+            # Fetch realtime quotes in batch
+            quotes_df = await asyncio.to_thread(get_realtime_quotes, stock_codes)
+
+            # Build a lookup dict for quick access
+            quotes_lookup = {}
+            if quotes_df is not None and not quotes_df.empty:
+                for _, row in quotes_df.iterrows():
+                    # The ts_code might have suffix, extract plain code
+                    ts_code = str(row.get('ts_code', ''))
+                    plain_code = ts_code.split('.')[0] if '.' in ts_code else ts_code
+                    quotes_lookup[plain_code] = row
+
+            # Merge quotes with stock data
+            results = []
+            for stock in stocks:
+                item = dict(stock)
+                code = stock['code']
+
+                if code in quotes_lookup:
+                    row = quotes_lookup[code]
+                    # Map tushare fields to our schema
+                    price = row.get('price')
+                    pct_chg = row.get('pct_chg')
+                    vol = row.get('vol')
+
+                    if price is not None and pd.notna(price):
+                        item['price'] = float(price)
+                    if pct_chg is not None and pd.notna(pct_chg):
+                        item['change_pct'] = float(pct_chg)
+                    if vol is not None and pd.notna(vol):
+                        # tushare vol is in shares, convert to hands (100 shares = 1 hand)
+                        item['volume'] = float(vol)
+
+                results.append(StockItem(**item))
+
+            return results
+
+        except ImportError:
+            # Fallback to old akshare method if tushare not available
+            print("TuShare not available, falling back to akshare")
+
+            def fetch_single_quote(stock):
+                item = dict(stock)
+                try:
+                    df = ak.stock_bid_ask_em(symbol=stock['code'])
+                    if not df.empty:
+                        info = dict(zip(df['item'], df['value']))
+                        price = info.get('最新') or info.get('最新价')
+                        change = info.get('涨幅') or info.get('涨跌幅')
+                        vol = info.get('总手') or info.get('成交量')
+
+                        if price is not None and str(price) != '':
+                            item['price'] = float(price)
+                        if change is not None and str(change) != '':
+                            item['change_pct'] = float(change)
+                        if vol is not None and str(vol) != '':
+                            v = float(vol)
+                            if info.get('总手') is not None:
+                                v = v * 100
+                            item['volume'] = v
+                except Exception:
+                    pass
+                return StockItem(**item)
+
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = await loop.run_in_executor(None, lambda: list(executor.map(fetch_single_quote, stocks)))
+
+            return results
+
     except Exception as e:
         print(f"Error reading stocks: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 @app.post("/api/stocks")
@@ -1406,7 +1447,8 @@ from src.data_sources.tushare_client import (
     get_margin_detail,
     get_forecast, get_share_float, get_dividend,
     get_stock_factors, get_chip_performance,
-    normalize_ts_code
+    normalize_ts_code,
+    search_funds_tushare
 )
 
 # In-memory cache for stock professional features
@@ -5152,6 +5194,142 @@ async def get_stress_test_scenarios(
     }
 
 
+class AIScenarioRequest(BaseModel):
+    """Request model for AI scenario generation."""
+    category: str  # monetary_policy, currency, market, sector, commodity
+
+
+@app.post("/api/portfolios/{portfolio_id}/stress-test/ai-scenarios")
+async def generate_ai_stress_scenario(
+    portfolio_id: int,
+    request: AIScenarioRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate AI-powered stress test scenario based on current market conditions.
+
+    Phase 1 of AI-enhanced stress testing:
+    - Takes a category (monetary_policy, currency, market, sector, commodity)
+    - Fetches real-time market data
+    - Uses LLM to generate realistic scenario parameters
+    - Returns scenario with AI reasoning
+    """
+    try:
+        from src.services.ai_scenario_service import ai_scenario_service
+
+        portfolio = get_portfolio_by_id(portfolio_id, current_user.id)
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        # Generate AI scenario
+        result = await ai_scenario_service.generate_scenario(request.category)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error generating AI scenario: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class StressTestChatRequest(BaseModel):
+    """Request model for stress test chat."""
+    message: str
+    history: Optional[List[Dict[str, str]]] = None
+
+
+@app.post("/api/portfolios/{portfolio_id}/stress-test/chat")
+async def stress_test_chat(
+    portfolio_id: int,
+    request: StressTestChatRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Conversational stress testing interface.
+
+    Phase 2 of AI-enhanced stress testing:
+    - User asks questions like "What if rates rise 75bp?"
+    - LLM parses intent and extracts parameters
+    - Runs stress test if applicable
+    - Returns AI interpretation of results
+    """
+    try:
+        from src.services.ai_scenario_service import stress_test_chat_service
+
+        portfolio = get_portfolio_by_id(portfolio_id, current_user.id)
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        # Get portfolio summary for context
+        positions = get_portfolio_positions(portfolio_id, current_user.id)
+        enriched = await _enrich_positions_with_prices(positions)
+
+        total_value = sum(float(p.get('current_value') or 0) for p in enriched)
+        total_cost = sum(float(p.get('total_cost') or 0) for p in enriched)
+        total_pnl = total_value - total_cost
+        total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+
+        portfolio_summary = {
+            "total_value": total_value,
+            "total_cost": total_cost,
+            "total_pnl": total_pnl,
+            "total_pnl_pct": total_pnl_pct,
+            "position_count": len(enriched)
+        }
+
+        # Get chat response
+        chat_result = await stress_test_chat_service.chat(
+            message=request.message,
+            portfolio_id=portfolio_id,
+            portfolio_summary=portfolio_summary,
+            history=request.history
+        )
+
+        # If chat suggests running stress test, run it
+        stress_result = None
+        if chat_result.get("should_run_stress_test") and chat_result.get("scenario_params"):
+            try:
+                # Build current prices map
+                current_prices = {}
+                for pos in enriched:
+                    code = pos.get('asset_code')
+                    price = pos.get('current_price') or pos.get('average_cost', 0)
+                    current_prices[code] = float(price)
+
+                # Run stress test with extracted parameters
+                params = chat_result["scenario_params"]
+                scenario = StressScenario(
+                    interest_rate_change_bp=params.get('interest_rate_change_bp', 0),
+                    fx_change_pct=params.get('fx_change_pct', 0),
+                    index_change_pct=params.get('index_change_pct', 0),
+                    oil_change_pct=params.get('oil_change_pct', 0)
+                )
+
+                engine = StressTestEngine()
+                stress_result = engine.run_stress_test(enriched, scenario, current_prices)
+                stress_result = sanitize_for_json(stress_result)
+            except Exception as e:
+                print(f"Stress test execution failed: {e}")
+
+        return {
+            "response": chat_result.get("response", ""),
+            "stress_result": stress_result,
+            "scenario_used": chat_result.get("scenario_params"),
+            "suggested_followups": chat_result.get("suggested_followups", [])
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in stress test chat: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/portfolios/{portfolio_id}/correlation")
 async def get_portfolio_correlation(
     portfolio_id: int,
@@ -5207,6 +5385,85 @@ async def get_portfolio_correlation(
     except Exception as e:
         print(f"Error calculating correlation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CorrelationExplainRequest(BaseModel):
+    correlation_data: dict
+
+
+@app.post("/api/portfolios/{portfolio_id}/correlation/explain")
+async def explain_portfolio_correlation(
+    portfolio_id: int,
+    request: CorrelationExplainRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate AI explanation for portfolio correlation matrix."""
+    try:
+        portfolio = get_portfolio_by_id(portfolio_id, current_user.id)
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        correlation_data = request.correlation_data
+
+        # Build the prompt for LLM
+        prompt = _build_correlation_explanation_prompt(correlation_data)
+
+        # Get LLM explanation
+        loop = asyncio.get_running_loop()
+        llm_client = get_llm_client()
+        explanation = await loop.run_in_executor(
+            None, llm_client.generate_content, prompt
+        )
+
+        return {"explanation": explanation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error generating correlation explanation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _build_correlation_explanation_prompt(correlation_data: dict) -> str:
+    """Build prompt for explaining correlation matrix."""
+    labels = correlation_data.get('labels', [])
+    high_correlations = correlation_data.get('high_correlations', [])
+    diversification_score = correlation_data.get('diversification_score', 0)
+    diversification_status = correlation_data.get('diversification_status', 'unknown')
+
+    # Format high correlation pairs
+    high_corr_text = ""
+    if high_correlations:
+        pairs = []
+        for hc in high_correlations[:5]:  # Limit to top 5
+            pairs.append(f"- {hc.get('name_a', '')} 与 {hc.get('name_b', '')}: {hc.get('correlation', 0):.2f}")
+        high_corr_text = "\n".join(pairs)
+    else:
+        high_corr_text = "无显著高相关性持仓对"
+
+    prompt = f"""你是一位专业的投资组合分析师。请根据以下持仓相关性数据，用简洁易懂的语言向普通投资者解释：
+
+## 持仓列表
+{', '.join(labels) if labels else '暂无持仓'}
+
+## 分散化评分
+- 得分: {diversification_score:.0f}/100
+- 状态: {diversification_status}
+
+## 高相关性持仓对
+{high_corr_text}
+
+请用2-3句话解释：
+1. 这个组合的分散化程度如何？
+2. 如果有高相关性的持仓，意味着什么风险？
+3. 给出一个简短的建议
+
+要求：
+- 使用简单易懂的语言，避免专业术语
+- 直接给出分析结论，不要重复数据
+- 控制在100字以内
+- 使用中文回答"""
+
+    return prompt
 
 
 @app.get("/api/portfolios/{portfolio_id}/signals")
@@ -5485,22 +5742,29 @@ async def get_portfolio_sparkline(
 def _get_stock_price_history(stock_code: str, days: int = 90) -> List[Dict]:
     """Get stock price history."""
     try:
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=days + 30)).strftime('%Y%m%d')
-
-        df = get_stock_history(stock_code, start_date, end_date)
-        if df is None or df.empty:
+        # get_stock_history returns List[Dict] with keys: date, value, volume
+        # We add some buffer to days to ensure we have enough data
+        history = get_stock_history(stock_code, days=days + 30)
+        
+        if not history:
             return []
 
-        df = df.tail(days)
+        # Sort by date to be sure
+        history.sort(key=lambda x: x['date'])
+        
+        # Take the requested number of days
+        recent_history = history[-days:]
+        
         return [
             {
-                'date': row['date'] if isinstance(row['date'], str) else row['date'].strftime('%Y-%m-%d'),
-                'price': float(row['close'])
+                'date': item['date'],
+                'price': item['value']
             }
-            for _, row in df.iterrows()
+            for item in recent_history
         ]
     except Exception as e:
+        print(f"Error in _get_stock_price_history: {e}")
+        return []
         print(f"Error fetching stock history for {stock_code}: {e}")
         return []
 

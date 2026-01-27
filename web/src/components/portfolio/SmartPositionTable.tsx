@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Paper,
@@ -13,6 +13,10 @@ import {
   Chip,
   IconButton,
   Tooltip,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
   useTheme,
   alpha,
 } from '@mui/material';
@@ -22,10 +26,14 @@ import {
   MoreVert,
   TrendingUp,
   TrendingDown,
+  AutoAwesome,
+  Close,
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import AISignalCell from './AISignalCell';
 import AISignalDrawer from './AISignalDrawer';
+import PortfolioDiagnosisCard from './PortfolioDiagnosisCard';
+import type { PortfolioDiagnosis } from '../../api';
 
 interface Position {
   id: number;
@@ -73,6 +81,9 @@ interface SignalDetail {
 interface SmartPositionTableProps {
   positions: Position[];
   signals: Signal[];
+  diagnosis?: PortfolioDiagnosis | null;
+  loadingDiagnosis?: boolean;
+  onRunDiagnosis?: () => void;
   onDelete?: (positionId: number) => void;
   onRecalculate?: (positionId: number) => void;
   onLoadSignalDetail?: (assetCode: string) => Promise<SignalDetail>;
@@ -83,9 +94,15 @@ interface SmartPositionTableProps {
 type SortField = 'name' | 'value' | 'pnl' | 'pnl_pct' | 'signal';
 type SortOrder = 'asc' | 'desc';
 
+// Limit initial render to prevent memory issues with large portfolios
+const INITIAL_DISPLAY_LIMIT = 20;
+
 const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
   positions,
   signals,
+  diagnosis,
+  loadingDiagnosis = false,
+  onRunDiagnosis,
   onDelete,
   onRecalculate,
   onLoadSignalDetail,
@@ -97,59 +114,76 @@ const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
 
   const [sortField, setSortField] = useState<SortField>('value');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [showAllPositions, setShowAllPositions] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [diagnosisDialogOpen, setDiagnosisDialogOpen] = useState(false);
   const [selectedSignalDetail, setSelectedSignalDetail] = useState<SignalDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  // Create a map of signals by code for quick lookup
-  const signalMap = signals.reduce((acc, signal) => {
-    acc[signal.code] = signal;
-    return acc;
-  }, {} as Record<string, Signal>);
+  // Memoize signalMap to prevent recreating on every render
+  const signalMap = useMemo(() =>
+    signals.reduce((acc, signal) => {
+      acc[signal.code] = signal;
+      return acc;
+    }, {} as Record<string, Signal>),
+    [signals]
+  );
 
-  // Sort positions
-  const sortedPositions = [...positions].sort((a, b) => {
-    let aVal: number | string = 0;
-    let bVal: number | string = 0;
+  // Memoize sorted positions to avoid re-sorting on every render
+  const sortedPositions = useMemo(() => {
+    return [...positions].sort((a, b) => {
+      let aVal: number | string = 0;
+      let bVal: number | string = 0;
 
-    switch (sortField) {
-      case 'name':
-        aVal = a.asset_name || a.asset_code;
-        bVal = b.asset_name || b.asset_code;
-        break;
-      case 'value':
-        aVal = a.current_value || 0;
-        bVal = b.current_value || 0;
-        break;
-      case 'pnl':
-        aVal = a.unrealized_pnl || 0;
-        bVal = b.unrealized_pnl || 0;
-        break;
-      case 'pnl_pct':
-        aVal = a.unrealized_pnl_pct || 0;
-        bVal = b.unrealized_pnl_pct || 0;
-        break;
-      case 'signal':
-        const aSignal = signalMap[a.asset_code];
-        const bSignal = signalMap[b.asset_code];
-        // Sort by signal type priority: risk > opportunity > neutral
-        const getPriority = (s?: Signal) => {
-          if (!s) return 0;
-          if (s.signal_type === 'risk') return 3;
-          if (s.signal_type === 'opportunity') return 2;
-          return 1;
-        };
-        aVal = getPriority(aSignal) * 100 + (aSignal?.strength || 0) * 100;
-        bVal = getPriority(bSignal) * 100 + (bSignal?.strength || 0) * 100;
-        break;
+      switch (sortField) {
+        case 'name':
+          aVal = a.asset_name || a.asset_code;
+          bVal = b.asset_name || b.asset_code;
+          break;
+        case 'value':
+          aVal = a.current_value || 0;
+          bVal = b.current_value || 0;
+          break;
+        case 'pnl':
+          aVal = a.unrealized_pnl || 0;
+          bVal = b.unrealized_pnl || 0;
+          break;
+        case 'pnl_pct':
+          aVal = a.unrealized_pnl_pct || 0;
+          bVal = b.unrealized_pnl_pct || 0;
+          break;
+        case 'signal':
+          const aSignal = signalMap[a.asset_code];
+          const bSignal = signalMap[b.asset_code];
+          // Sort by signal type priority: risk > opportunity > neutral
+          const getPriority = (s?: Signal) => {
+            if (!s) return 0;
+            if (s.signal_type === 'risk') return 3;
+            if (s.signal_type === 'opportunity') return 2;
+            return 1;
+          };
+          aVal = getPriority(aSignal) * 100 + (aSignal?.strength || 0) * 100;
+          bVal = getPriority(bSignal) * 100 + (bSignal?.strength || 0) * 100;
+          break;
+      }
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+
+      return sortOrder === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+    });
+  }, [positions, sortField, sortOrder, signalMap]);
+
+  // Limit displayed positions to prevent memory issues
+  const displayedPositions = useMemo(() => {
+    if (showAllPositions || sortedPositions.length <= INITIAL_DISPLAY_LIMIT) {
+      return sortedPositions;
     }
+    return sortedPositions.slice(0, INITIAL_DISPLAY_LIMIT);
+  }, [sortedPositions, showAllPositions]);
 
-    if (typeof aVal === 'string' && typeof bVal === 'string') {
-      return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-    }
-
-    return sortOrder === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
-  });
+  const hasMorePositions = sortedPositions.length > INITIAL_DISPLAY_LIMIT && !showAllPositions;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -190,8 +224,7 @@ const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
 
   return (
     <>
-      <TableContainer
-        component={Paper}
+      <Paper
         elevation={0}
         sx={{
           border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
@@ -199,7 +232,30 @@ const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
           overflow: 'hidden',
         }}
       >
-        <Table size="small">
+        {onRunDiagnosis && (
+          <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'flex-end', borderBottom: `1px solid ${alpha(theme.palette.divider, 0.1)}` }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AutoAwesome />}
+              onClick={() => setDiagnosisDialogOpen(true)}
+              sx={{ 
+                textTransform: 'none', 
+                borderRadius: 2,
+                color: '#6366f1',
+                borderColor: alpha('#6366f1', 0.5),
+                '&:hover': {
+                  borderColor: '#6366f1',
+                  bgcolor: alpha('#6366f1', 0.05),
+                }
+              }}
+            >
+              {t('portfolio.ai_diagnosis', 'AI Diagnosis')}
+            </Button>
+          </Box>
+        )}
+        <TableContainer>
+          <Table size="small">
           <TableHead>
             <TableRow sx={{ bgcolor: alpha(theme.palette.background.default, 0.5) }}>
               <TableCell>
@@ -247,7 +303,7 @@ const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortedPositions.map((position) => {
+            {displayedPositions.map((position) => {
               const signal = signalMap[position.asset_code];
               const pnl = position.unrealized_pnl;
               const pnlPct = position.unrealized_pnl_pct;
@@ -413,9 +469,25 @@ const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
                 </TableCell>
               </TableRow>
             )}
+
+            {/* Show More button */}
+            {hasMorePositions && (
+              <TableRow>
+                <TableCell colSpan={showActions ? 8 : 7} align="center" sx={{ py: 2 }}>
+                  <Button
+                    size="small"
+                    onClick={() => setShowAllPositions(true)}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {t('portfolio.showMore', '显示全部 {{count}} 个持仓', { count: sortedPositions.length })}
+                  </Button>
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </TableContainer>
+      </Paper>
 
       {/* Signal Detail Drawer */}
       <AISignalDrawer
@@ -424,6 +496,33 @@ const SmartPositionTable: React.FC<SmartPositionTableProps> = ({
         signalDetail={selectedSignalDetail}
         loading={loadingDetail}
       />
+
+      {/* Diagnosis Dialog */}
+      <Dialog
+        open={diagnosisDialogOpen}
+        onClose={() => setDiagnosisDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: { borderRadius: 3, p: 0, overflow: 'hidden' }
+        }}
+      >
+        <Box sx={{ position: 'relative' }}>
+          <IconButton
+            onClick={() => setDiagnosisDialogOpen(false)}
+            sx={{ position: 'absolute', right: 8, top: 8, zIndex: 1 }}
+          >
+            <Close />
+          </IconButton>
+          <PortfolioDiagnosisCard
+            diagnosis={diagnosis || null}
+            loading={loadingDiagnosis}
+            onRefresh={() => {
+              if (onRunDiagnosis) onRunDiagnosis();
+            }}
+          />
+        </Box>
+      </Dialog>
     </>
   );
 };

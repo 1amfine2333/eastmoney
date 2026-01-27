@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Dialog,
@@ -28,10 +28,12 @@ export default function AssetSearchDialog({ open, onClose, onSelect }: AssetSear
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchInput, setSearchInput] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = useCallback(async (query: string) => {
     if (query.length < 2) return;
     setSearching(true);
+    setHasSearched(true);
     try {
       if (tab === 'fund') {
         const results = await searchMarketFunds(query);
@@ -42,8 +44,16 @@ export default function AssetSearchDialog({ open, onClose, onSelect }: AssetSear
       }
     } catch (error) {
       console.error('Search failed:', error);
+      setSearchResults([]);
     } finally {
       setSearching(false);
+    }
+  }, [tab]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && searchInput.length >= 2) {
+      e.preventDefault();
+      handleSearch(searchInput);
     }
   };
 
@@ -51,6 +61,7 @@ export default function AssetSearchDialog({ open, onClose, onSelect }: AssetSear
     setTab(newValue);
     setSearchResults([]);
     setSearchInput('');
+    setHasSearched(false);
   };
 
   return (
@@ -76,25 +87,31 @@ export default function AssetSearchDialog({ open, onClose, onSelect }: AssetSear
           <Tab value="fund" label={t('portfolio.fund_type')} />
         </Tabs>
       </DialogTitle>
-      <DialogContent sx={{ pt: 3 }}>
-        <Autocomplete
-          fullWidth
+      <DialogContent sx={{ pt: 5 }}>
+        <Box sx={{ mt: 4 }}>
+          <Autocomplete
+            fullWidth
+          freeSolo
           options={searchResults}
           getOptionLabel={(option) =>
-            tab === 'fund'
-              ? `${option.code} - ${option.name}`
-              : `${option.code} - ${option.name}${option.industry ? ` (${option.industry})` : ''}`
+            typeof option === 'string'
+              ? option
+              : tab === 'fund'
+                ? `${option.code} - ${option.name}`
+                : `${option.code} - ${option.name}${option.industry ? ` (${option.industry})` : ''}`
           }
           loading={searching}
           inputValue={searchInput}
-          onInputChange={(_, value) => {
+          onInputChange={(_, value, reason) => {
             setSearchInput(value);
-            if (value.length >= 2) {
-              handleSearch(value);
+            // Clear results when user clears input
+            if (reason === 'clear' || value === '') {
+              setSearchResults([]);
+              setHasSearched(false);
             }
           }}
           onChange={(_, value) => {
-            if (value) {
+            if (value && typeof value !== 'string') {
               onSelect({
                 code: value.code,
                 name: value.name,
@@ -108,7 +125,8 @@ export default function AssetSearchDialog({ open, onClose, onSelect }: AssetSear
             <TextField
               {...params}
               label={tab === 'stock' ? t('portfolio.search_stock') : t('portfolio.search_fund')}
-              placeholder={t('portfolio.search_hint')}
+              placeholder={t('portfolio.press_enter_to_search')}
+              onKeyDown={handleKeyDown}
               slotProps={{
                 input: {
                   ...params.InputProps,
@@ -150,10 +168,17 @@ export default function AssetSearchDialog({ open, onClose, onSelect }: AssetSear
               </Box>
             </li>
           )}
-          noOptionsText={searchInput.length < 2 ? t('portfolio.search_hint') : t('portfolio.no_results')}
+          noOptionsText={
+            !hasSearched
+              ? t('portfolio.press_enter_to_search')
+              : searchInput.length < 2
+                ? t('portfolio.search_hint')
+                : t('portfolio.no_results')
+          }
         />
+        </Box>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-          {t('portfolio.search_tip')}
+          {t('portfolio.search_enter_tip')}
         </Typography>
       </DialogContent>
     </Dialog>

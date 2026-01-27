@@ -271,10 +271,13 @@ class StressTestEngine:
             asset_type, self.factor_sensitivities.get("stock")
         )
 
+        # Ensure sector is a string (handle None case)
+        sector_str = sector or ""
+
         # Get sector-specific adjustments
         sector_adj = {}
         for s, adj in SECTOR_SENSITIVITIES.items():
-            if s in sector:
+            if s in sector_str:
                 for factor, mult in adj.items():
                     if factor in sector_adj:
                         sector_adj[factor] = max(sector_adj[factor], mult)
@@ -319,7 +322,7 @@ class StressTestEngine:
         # Sector-specific shocks
         if scenario.sector_shocks:
             for shock_sector, shock_pct in scenario.sector_shocks.items():
-                if shock_sector.lower() in sector.lower():
+                if shock_sector.lower() in sector_str.lower():
                     total_impact += shock_pct / 100
 
         return total_impact

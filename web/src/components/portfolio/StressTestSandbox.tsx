@@ -9,13 +9,19 @@ import {
   CircularProgress,
   useTheme,
   alpha,
+  Collapse,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
+import { Chat, ExpandMore, ExpandLess } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import { create } from 'zustand';
 import debounce from 'lodash/debounce';
 import ScenarioPresets from './ScenarioPresets';
-import MacroFactorSlider from './MacroFactorSlider';
+import type { AIScenario } from './ScenarioPresets';
 import StressTestResults from './StressTestResults';
+import StressTestChat from './StressTestChat';
+import { generateAIScenario } from '../../api';
 
 // Zustand store for stress test state
 interface SandboxState {
@@ -26,10 +32,8 @@ interface SandboxState {
     oil_change_pct: number;
   };
   selectedPreset: string | null;
-  isCustomMode: boolean;
   setScenario: (updates: Partial<SandboxState['scenario']>) => void;
   setSelectedPreset: (preset: string | null) => void;
-  setCustomMode: (isCustom: boolean) => void;
   reset: () => void;
 }
 
@@ -41,14 +45,11 @@ const useSandboxStore = create<SandboxState>((set) => ({
     oil_change_pct: 0,
   },
   selectedPreset: null,
-  isCustomMode: false,
   setScenario: (updates) =>
     set((state) => ({
       scenario: { ...state.scenario, ...updates },
     })),
-  setSelectedPreset: (preset) => set({ selectedPreset: preset, isCustomMode: false }),
-  setCustomMode: (isCustom) =>
-    set({ isCustomMode: isCustom, selectedPreset: isCustom ? null : null }),
+  setSelectedPreset: (preset) => set({ selectedPreset: preset }),
   reset: () =>
     set({
       scenario: {
@@ -58,7 +59,6 @@ const useSandboxStore = create<SandboxState>((set) => ({
         oil_change_pct: 0,
       },
       selectedPreset: null,
-      isCustomMode: false,
     }),
 }));
 
@@ -68,17 +68,6 @@ interface Scenario {
   description: string;
   category: string;
   icon: string;
-}
-
-interface SliderConfig {
-  id: string;
-  name: string;
-  min: number;
-  max: number;
-  step: number;
-  default: number;
-  unit: string;
-  description: string;
 }
 
 interface StressTestResult {
@@ -104,7 +93,6 @@ interface StressTestResult {
 interface StressTestSandboxProps {
   portfolioId: number;
   scenarios: Scenario[];
-  sliders: SliderConfig[];
   onRunStressTest: (params: {
     scenario_type?: string;
     scenario?: Record<string, number>;
@@ -115,7 +103,6 @@ interface StressTestSandboxProps {
 const StressTestSandbox: React.FC<StressTestSandboxProps> = ({
   portfolioId,
   scenarios,
-  sliders,
   onRunStressTest,
   initialResult,
 }) => {
@@ -125,14 +112,19 @@ const StressTestSandbox: React.FC<StressTestSandboxProps> = ({
   const {
     scenario,
     selectedPreset,
-    isCustomMode,
     setScenario,
     setSelectedPreset,
-    setCustomMode,
   } = useSandboxStore();
 
   const [result, setResult] = useState<StressTestResult | null>(initialResult || null);
   const [loading, setLoading] = useState(false);
+
+  // AI Scenario State (Phase 1)
+  const [aiScenario, setAIScenario] = useState<AIScenario | null>(null);
+  const [loadingAICategory, setLoadingAICategory] = useState<string | null>(null);
+
+  // Chat State (Phase 2)
+  const [showChat, setShowChat] = useState(false);
 
   // Debounced stress test execution
   const runStressTestDebounced = useCallback(
@@ -152,20 +144,10 @@ const StressTestSandbox: React.FC<StressTestSandboxProps> = ({
 
   // Run stress test when preset changes
   useEffect(() => {
-    if (selectedPreset) {
+    if (selectedPreset && !selectedPreset.startsWith('ai_')) {
       runStressTestDebounced({ scenario_type: selectedPreset });
     }
   }, [selectedPreset, runStressTestDebounced]);
-
-  // Run stress test when custom scenario changes
-  useEffect(() => {
-    if (isCustomMode) {
-      const hasChanges = Object.values(scenario).some((v) => v !== 0);
-      if (hasChanges) {
-        runStressTestDebounced({ scenario });
-      }
-    }
-  }, [scenario, isCustomMode, runStressTestDebounced]);
 
   const handlePresetSelect = (presetId: string) => {
     if (selectedPreset === presetId) {
@@ -173,18 +155,44 @@ const StressTestSandbox: React.FC<StressTestSandboxProps> = ({
       setResult(null);
     } else {
       setSelectedPreset(presetId);
+      // Clear AI scenario when selecting regular preset
+      if (!presetId.startsWith('ai_')) {
+        setAIScenario(null);
+      }
     }
   };
 
-  const handleSliderChange = (id: string, value: number) => {
-    setScenario({ [id]: value } as Partial<SandboxState['scenario']>);
+  // AI Scenario Generation (Phase 1)
+  const handleRequestAI = async (category: string) => {
+    setLoadingAICategory(category);
+    try {
+      const response = await generateAIScenario(portfolioId, category);
+      const newAIScenario: AIScenario = response.scenario;
+      setAIScenario(newAIScenario);
+    } catch (error) {
+      console.error('AI scenario generation failed:', error);
+    } finally {
+      setLoadingAICategory(null);
+    }
   };
 
-  const handleCustomModeToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setCustomMode(event.target.checked);
-    if (!event.target.checked) {
-      setResult(null);
-    }
+  // Handle AI Scenario Selection
+  const handleSelectAIScenario = (aiScen: AIScenario) => {
+    setSelectedPreset(aiScen.id);
+
+    // Run stress test with AI scenario parameters
+    runStressTestDebounced({ scenario: aiScen.parameters });
+  };
+
+  // Handle scenario from chat (Phase 2)
+  const handleChatScenarioGenerated = (params: Record<string, number>) => {
+    // Update sliders with chat-generated params
+    setScenario(params as Partial<SandboxState['scenario']>);
+  };
+
+  // Handle results from chat
+  const handleChatResultsReceived = (chatResult: StressTestResult) => {
+    setResult(chatResult);
   };
 
   return (
@@ -199,74 +207,58 @@ const StressTestSandbox: React.FC<StressTestSandboxProps> = ({
         borderRadius: 3,
       }}
     >
-      <Typography variant="h6" fontWeight={600} gutterBottom>
-        {t('portfolio.stressTestSandbox', '压力测试沙箱')}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+        <Typography variant="h6" fontWeight={600}>
+          {t('portfolio.stressTestSandbox', 'Stress Test Sandbox')}
+        </Typography>
+        <Tooltip title={t('portfolio.aiChat', 'AI Chat')}>
+          <IconButton
+            size="small"
+            onClick={() => setShowChat(!showChat)}
+            sx={{
+              color: showChat ? theme.palette.primary.main : theme.palette.text.secondary,
+              bgcolor: showChat ? alpha(theme.palette.primary.main, 0.1) : 'transparent',
+            }}
+          >
+            <Chat fontSize="small" />
+            {showChat ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+          </IconButton>
+        </Tooltip>
+      </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t('portfolio.stressTestDescription', '模拟宏观因素变化对您组合的影响')}
+        {t('portfolio.stressTestDescription', 'Simulate the impact of macro factor changes on your portfolio')}
       </Typography>
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {/* Preset Scenarios */}
+        {/* AI Chat Panel (Phase 2) */}
+        <Collapse in={showChat}>
+          <StressTestChat
+            portfolioId={portfolioId}
+            onScenarioGenerated={handleChatScenarioGenerated}
+            onResultsReceived={handleChatResultsReceived}
+          />
+        </Collapse>
+
+        {/* Preset Scenarios with AI Enhancement */}
         <Box>
           <ScenarioPresets
             scenarios={scenarios}
             selectedScenario={selectedPreset}
             onSelect={handlePresetSelect}
-            disabled={isCustomMode || loading}
+            disabled={loading}
+            onRequestAI={handleRequestAI}
+            loadingAICategory={loadingAICategory}
+            aiScenario={aiScenario}
+            onSelectAIScenario={handleSelectAIScenario}
           />
         </Box>
-
-        <Divider>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={isCustomMode}
-                onChange={handleCustomModeToggle}
-                size="small"
-              />
-            }
-            label={
-              <Typography variant="caption" color="text.secondary">
-                {t('portfolio.customScenario', '自定义情景')}
-              </Typography>
-            }
-          />
-        </Divider>
-
-        {/* Custom Factor Sliders */}
-        {isCustomMode && (
-          <Box
-            sx={{
-              p: 2,
-              bgcolor: alpha(theme.palette.background.default, 0.5),
-              borderRadius: 2,
-            }}
-          >
-            {sliders.map((slider) => (
-              <MacroFactorSlider
-                key={slider.id}
-                id={slider.id}
-                name={slider.name}
-                value={scenario[slider.id as keyof typeof scenario] || 0}
-                min={slider.min}
-                max={slider.max}
-                step={slider.step}
-                unit={slider.unit}
-                description={slider.description}
-                onChange={handleSliderChange}
-                disabled={loading}
-              />
-            ))}
-          </Box>
-        )}
 
         <Divider />
 
         {/* Results */}
         <Box>
           <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-            {t('portfolio.simulationResults', '模拟结果')}
+            {t('portfolio.simulationResults', 'Simulation Results')}
           </Typography>
 
           {loading ? (
@@ -299,7 +291,7 @@ const StressTestSandbox: React.FC<StressTestSandboxProps> = ({
               }}
             >
               <Typography variant="body2">
-                {t('portfolio.selectScenario', '请选择一个预设情景或自定义参数')}
+                {t('portfolio.selectScenario', 'Select a preset scenario or customize parameters')}
               </Typography>
             </Box>
           )}

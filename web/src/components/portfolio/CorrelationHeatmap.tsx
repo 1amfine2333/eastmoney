@@ -1,7 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { Box, Paper, Typography, useTheme, alpha, Tooltip } from '@mui/material';
 import * as echarts from 'echarts';
 import { useTranslation } from 'react-i18next';
+
+// Limit max items to prevent memory exhaustion with large portfolios
+const MAX_HEATMAP_ITEMS = 10;
 
 interface CorrelationDataPoint {
   x: number;
@@ -41,8 +44,33 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
+  // Truncate data to prevent memory exhaustion with large portfolios
+  const { truncatedData, truncatedLabels, truncatedCodes, isTruncated } = useMemo(() => {
+    const actualSize = Math.min(size, MAX_HEATMAP_ITEMS);
+    const isTruncated = size > MAX_HEATMAP_ITEMS;
+
+    if (!isTruncated) {
+      return {
+        truncatedData: data,
+        truncatedLabels: labels,
+        truncatedCodes: codes,
+        isTruncated: false,
+      };
+    }
+
+    // Filter data to only include points within the truncated range
+    const filteredData = data.filter(d => d.x < actualSize && d.y < actualSize);
+
+    return {
+      truncatedData: filteredData,
+      truncatedLabels: labels.slice(0, actualSize),
+      truncatedCodes: codes.slice(0, actualSize),
+      isTruncated: true,
+    };
+  }, [data, labels, codes, size]);
+
   useEffect(() => {
-    if (!chartRef.current || loading || data.length === 0) return;
+    if (!chartRef.current || loading || truncatedData.length === 0) return;
 
     // Initialize or get existing chart instance
     if (!chartInstance.current) {
@@ -52,14 +80,15 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
     const chart = chartInstance.current;
 
     // Transform data for ECharts
-    const chartData = data.map((d) => [d.x, d.y, d.value]);
+    const chartData = truncatedData.map((d) => [d.x, d.y, d.value]);
+    const effectiveSize = truncatedLabels.length;
 
     const option: echarts.EChartsOption = {
       tooltip: {
         position: 'top',
         formatter: (params: any) => {
           const dataIndex = params.dataIndex;
-          const point = data[dataIndex];
+          const point = truncatedData[dataIndex];
           if (!point) return '';
 
           const value = point.value;
@@ -106,7 +135,7 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
       },
       xAxis: {
         type: 'category',
-        data: labels,
+        data: truncatedLabels,
         splitArea: { show: true },
         axisLabel: {
           color: theme.palette.text.secondary,
@@ -119,7 +148,7 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
       },
       yAxis: {
         type: 'category',
-        data: labels,
+        data: truncatedLabels,
         splitArea: { show: true },
         axisLabel: {
           color: theme.palette.text.secondary,
@@ -156,7 +185,7 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
           type: 'heatmap',
           data: chartData,
           label: {
-            show: size <= 8,
+            show: effectiveSize <= 8,
             formatter: (params: any) => {
               const val = params.value[2];
               return val.toFixed(2);
@@ -184,7 +213,7 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
     if (onCellClick) {
       chart.on('click', (params: any) => {
         const dataIndex = params.dataIndex;
-        const point = data[dataIndex];
+        const point = truncatedData[dataIndex];
         if (point) {
           onCellClick(point.row_code, point.col_code, point.value);
         }
@@ -200,7 +229,7 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [data, labels, size, theme, onCellClick, loading, t]);
+  }, [truncatedData, truncatedLabels, theme, onCellClick, loading, t]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -279,9 +308,16 @@ const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
           mb: 2,
         }}
       >
-        <Typography variant="subtitle2" color="text.secondary">
-          {t('portfolio.correlationMatrix', '相关性矩阵')}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="subtitle2" color="text.secondary">
+            {t('portfolio.correlationMatrix', '相关性矩阵')}
+          </Typography>
+          {isTruncated && (
+            <Typography variant="caption" color="warning.main">
+              ({t('portfolio.showingTop', '仅显示前{{count}}个', { count: MAX_HEATMAP_ITEMS })})
+            </Typography>
+          )}
+        </Box>
         <Tooltip title={t('portfolio.diversificationTooltip', '分散化评分基于持仓间的平均相关性，越低表示分散效果越好')}>
           <Box
             sx={{

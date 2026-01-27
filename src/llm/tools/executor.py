@@ -47,6 +47,7 @@ class ToolExecutor:
             "get_fund_info": self._get_fund_info,
             "get_fund_holdings": self._get_fund_holdings,
             "search_funds": self._search_funds,
+            "run_portfolio_stress_test": self._run_portfolio_stress_test,
         }
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -547,6 +548,63 @@ class ToolExecutor:
                 for f in results[:limit]
             ]
         }
+
+    def _run_portfolio_stress_test(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Run stress test on a portfolio with given scenario parameters."""
+        from src.analysis.portfolio.stress_test import StressTestEngine, StressScenario
+        from src.storage.db import get_portfolio_positions
+
+        portfolio_id = args.get("portfolio_id")
+        if not portfolio_id:
+            return {"error": "Missing portfolio_id parameter"}
+
+        try:
+            # Get portfolio positions
+            # Note: This is a simplified version that works for the tool context
+            # In production, user_id would come from the authenticated context
+            positions = get_portfolio_positions(portfolio_id, user_id=1)
+
+            if not positions:
+                return {"error": "No positions found in portfolio or portfolio not found"}
+
+            # Build scenario from parameters
+            scenario = StressScenario(
+                interest_rate_change_bp=args.get("interest_rate_change_bp", 0),
+                fx_change_pct=args.get("fx_change_pct", 0),
+                index_change_pct=args.get("index_change_pct", 0),
+                oil_change_pct=args.get("oil_change_pct", 0)
+            )
+
+            # Get current prices - simplified approach using average cost as fallback
+            current_prices = {}
+            for pos in positions:
+                code = pos.get('asset_code')
+                price = pos.get('average_cost', 100)  # Fallback to average cost
+                current_prices[code] = float(price) if price else 100.0
+
+            # Run stress test
+            engine = StressTestEngine()
+            result = engine.run_stress_test(positions, scenario, current_prices)
+
+            # Format result for LLM consumption
+            return {
+                "portfolio_id": portfolio_id,
+                "scenario": {
+                    "interest_rate_change_bp": scenario.interest_rate_change_bp,
+                    "fx_change_pct": scenario.fx_change_pct,
+                    "index_change_pct": scenario.index_change_pct,
+                    "oil_change_pct": scenario.oil_change_pct
+                },
+                "projected_pnl_pct": result.get("projected_pnl_pct", 0),
+                "var_95_pct": result.get("var_95_pct", 0),
+                "risk_level": result.get("risk_level", "unknown"),
+                "top_losers": result.get("top_losers", [])[:3],
+                "top_gainers": result.get("top_gainers", [])[:3],
+                "summary": f"预计{'亏损' if result.get('projected_pnl_pct', 0) < 0 else '盈利'}{abs(result.get('projected_pnl_pct', 0)):.2f}%，风险等级：{result.get('risk_level', '未知')}"
+            }
+
+        except Exception as e:
+            return {"error": f"Stress test failed: {str(e)}"}
 
 
 # Singleton instance

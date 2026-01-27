@@ -2253,6 +2253,17 @@ export const fetchPortfolioCorrelation = async (
     return response.data;
 };
 
+// Correlation AI Explanation API
+export const fetchCorrelationExplanation = async (
+    portfolioId: number,
+    correlationData: CorrelationResult
+): Promise<{ explanation: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/correlation/explain`, {
+        correlation_data: correlationData
+    });
+    return response.data;
+};
+
 // Signals APIs
 export const fetchPortfolioSignals = async (portfolioId: number): Promise<SignalsResult> => {
     const response = await api.get(`/portfolios/${portfolioId}/signals`);
@@ -2280,6 +2291,206 @@ export const fetchPortfolioSparkline = async (
 ): Promise<SparklineData> => {
     const response = await api.get(`/portfolios/${portfolioId}/sparkline`, {
         params: { days }
+    });
+    return response.data;
+};
+
+
+// ====================================================================
+// Returns Analysis API
+// ====================================================================
+
+// Returns Summary Types
+export interface ReturnsDayInfo {
+    date: string;
+    pnl: number;
+    pnl_pct: number;
+}
+
+export interface ReturnsSummary {
+    total_pnl: number;
+    total_pnl_pct: number;
+    annualized_return: number;
+    today_pnl: number;
+    today_pnl_pct: number;
+    week_pnl: number;
+    week_pnl_pct: number;
+    month_pnl: number;
+    month_pnl_pct: number;
+    max_drawdown: number;
+    max_drawdown_pct: number;
+    win_rate: number;
+    profitable_days: number;
+    total_trading_days: number;
+    best_day: ReturnsDayInfo | null;
+    worst_day: ReturnsDayInfo | null;
+}
+
+// Returns Calendar Types
+export interface ReturnsCalendarEntry {
+    date: string;
+    pnl: number;
+    pnl_pct: number;
+    is_trading_day?: boolean;
+}
+
+export interface ReturnsCalendarStats {
+    total_periods: number;
+    profitable_periods: number;
+    loss_periods: number;
+    best_period: { date: string; pnl_pct: number } | null;
+    worst_period: { date: string; pnl_pct: number } | null;
+}
+
+export interface ReturnsCalendarData {
+    view: 'day' | 'month' | 'year';
+    data: ReturnsCalendarEntry[];
+    stats: ReturnsCalendarStats;
+}
+
+// Daily Returns Detail Types
+export interface DailyPositionReturn {
+    position_id: number;
+    asset_code: string;
+    asset_name: string;
+    asset_type: 'stock' | 'fund';
+    shares: number;
+    yesterday_nav: number;
+    today_nav: number;
+    nav_change: number;
+    nav_change_pct: number;
+    position_pnl: number;
+    position_pnl_pct: number;
+    contribution_pct: number;
+    market_value: number;
+    weight_pct: number;
+}
+
+export interface DailyReturnsDetail {
+    date: string;
+    total_pnl: number;
+    total_pnl_pct: number;
+    positions: DailyPositionReturn[];
+    top_contributors: DailyPositionReturn[];
+    top_detractors: DailyPositionReturn[];
+}
+
+// Returns Explanation Types
+export interface ReturnsExplanation {
+    date: string;
+    explanation: string;
+    generated_at: string;
+}
+
+// Returns Summary API
+export const fetchReturnsSummary = async (portfolioId: number): Promise<ReturnsSummary> => {
+    const response = await api.get(`/portfolios/${portfolioId}/returns/summary`);
+    return response.data;
+};
+
+// Returns Calendar API
+export const fetchReturnsCalendar = async (
+    portfolioId: number,
+    view: 'day' | 'month' | 'year' = 'day',
+    startDate?: string,
+    endDate?: string
+): Promise<ReturnsCalendarData> => {
+    const response = await api.get(`/portfolios/${portfolioId}/returns/calendar`, {
+        params: { view, start_date: startDate, end_date: endDate }
+    });
+    return response.data;
+};
+
+// Daily Returns Detail API
+export const fetchDailyReturnsDetail = async (
+    portfolioId: number,
+    date?: string
+): Promise<DailyReturnsDetail> => {
+    const response = await api.get(`/portfolios/${portfolioId}/returns/daily-detail`, {
+        params: { date }
+    });
+    return response.data;
+};
+
+// Returns Explanation API
+export const fetchReturnsExplanation = async (
+    portfolioId: number,
+    date?: string,
+    includeMarketContext: boolean = true
+): Promise<ReturnsExplanation> => {
+    const response = await api.post(`/portfolios/${portfolioId}/returns/explain`, {
+        date,
+        include_market_context: includeMarketContext
+    });
+    return response.data;
+};
+
+
+// ====================================================================
+// AI-Enhanced Stress Test API (Phase 1 & 2)
+// ====================================================================
+
+// AI Scenario Types
+export interface AIScenario {
+    id: string;
+    name: string;
+    parameters: {
+        interest_rate_change_bp: number;
+        fx_change_pct: number;
+        index_change_pct: number;
+        oil_change_pct: number;
+    };
+    reasoning: string;
+    confidence: 'high' | 'medium' | 'low';
+    generated_at: string;
+    source: 'ai' | 'fallback';
+}
+
+export interface MarketContext {
+    indices: Record<string, any>;
+    usd_cny: number | null;
+    timestamp: string;
+}
+
+export interface AIScenarioResponse {
+    scenario: AIScenario;
+    market_context: MarketContext;
+    error?: string;
+}
+
+// Stress Test Chat Types
+export interface StressTestChatMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
+export interface StressTestChatResponse {
+    response: string;
+    stress_result: StressTestResult | null;
+    scenario_used: Record<string, number> | null;
+    suggested_followups: string[];
+}
+
+// AI Scenario Generation API
+export const generateAIScenario = async (
+    portfolioId: number,
+    category: string
+): Promise<AIScenarioResponse> => {
+    const response = await api.post(`/portfolios/${portfolioId}/stress-test/ai-scenarios`, {
+        category
+    });
+    return response.data;
+};
+
+// Stress Test Chat API
+export const stressTestChat = async (
+    portfolioId: number,
+    message: string,
+    history: StressTestChatMessage[] = []
+): Promise<StressTestChatResponse> => {
+    const response = await api.post(`/portfolios/${portfolioId}/stress-test/chat`, {
+        message,
+        history
     });
     return response.data;
 };

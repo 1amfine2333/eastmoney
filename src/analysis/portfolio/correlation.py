@@ -55,10 +55,18 @@ class CorrelationAnalyzer:
             history = price_histories.get(code, [])
 
             if not history:
+                print(f"[CorrelationAnalyzer] {code}: No history data")
                 continue
 
             # Calculate returns
             returns = self._calculate_returns(history)
+            print(f"[CorrelationAnalyzer] {code}: {len(history)} history points -> {len(returns)} returns")
+
+            # Debug: print first few dates
+            if returns:
+                sample_dates = list(returns.keys())[:3]
+                print(f"[CorrelationAnalyzer] {code} sample dates: {sample_dates}")
+
             if len(returns) >= 20:  # Minimum 20 data points
                 returns_data[code] = returns
                 asset_names[code] = name
@@ -68,7 +76,10 @@ class CorrelationAnalyzer:
 
         # Create DataFrame with aligned dates
         df = pd.DataFrame(returns_data)
+        print(f"[CorrelationAnalyzer] DataFrame shape before dropna: {df.shape}")
+
         df = df.dropna()
+        print(f"[CorrelationAnalyzer] DataFrame shape after dropna: {df.shape}")
 
         if len(df) < 20:
             return self._empty_correlation_result("Insufficient aligned data")
@@ -147,9 +158,48 @@ class CorrelationAnalyzer:
             prev_price = float(prev.get("price") or prev.get("close") or prev.get("value", 0))
 
             if date and curr_price and prev_price > 0:
-                returns[date] = (curr_price / prev_price) - 1
+                # Normalize date format to YYYY-MM-DD
+                normalized_date = self._normalize_date(date)
+                if normalized_date:
+                    returns[normalized_date] = (curr_price / prev_price) - 1
 
         return returns
+
+    def _normalize_date(self, date_str: str) -> str:
+        """Normalize date string to YYYY-MM-DD format."""
+        if not date_str:
+            return ""
+
+        # Already in correct format
+        if len(date_str) == 10 and date_str[4] == '-' and date_str[7] == '-':
+            return date_str
+
+        # Try various formats
+        formats = [
+            "%Y-%m-%d",
+            "%Y/%m/%d",
+            "%Y%m%d",
+            "%d-%m-%Y",
+            "%d/%m/%Y",
+        ]
+
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+
+        # If all else fails, try to extract date parts
+        try:
+            # Remove any non-digit characters and try to parse
+            digits = ''.join(c for c in date_str if c.isdigit())
+            if len(digits) == 8:
+                return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+        except:
+            pass
+
+        return date_str  # Return as-is if can't normalize
 
     def _find_high_correlations(
         self,
