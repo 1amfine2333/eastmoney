@@ -1008,6 +1008,14 @@ def get_realtime_quotes(ts_codes: list) -> Optional[pd.DataFrame]:
     if not ts_codes:
         return None
 
+    # Explicitly set token to avoid "Please set tushare pro token credentials" error
+    # even though realtime_quote is technically a legacy API.
+    if TUSHARE_API_TOKEN:
+        try:
+            ts.set_token(TUSHARE_API_TOKEN)
+        except Exception:
+            pass
+
     # Normalize codes - tushare realtime needs plain codes without suffix
     plain_codes = []
     for code in ts_codes:

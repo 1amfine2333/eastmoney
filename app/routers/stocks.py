@@ -3,8 +3,9 @@ Stock management endpoints.
 """
 import json
 import asyncio
-from typing import List
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, Depends
 import akshare as ak
 import pandas as pd
@@ -16,30 +17,114 @@ from app.core.cache import stock_feature_cache
 from app.core.utils import sanitize_for_json, sanitize_data
 from src.storage.db import get_all_stocks, upsert_stock, delete_stock
 from src.data_sources.akshare_api import get_stock_realtime_quote
+from src.data_sources.tushare_client import (
+    get_financial_indicators, get_income_statement, get_balance_sheet, get_cashflow_statement,
+    get_top10_holders, get_shareholder_number,
+    get_margin_detail,
+    get_forecast, get_share_float, get_dividend,
+    get_stock_factors, get_chip_performance
+)
 
 router = APIRouter(prefix="/api/stocks", tags=["Stocks"])
 
 
 @router.get("", response_model=List[StockItem])
 async def get_stocks_endpoint(current_user: User = Depends(get_current_user)):
-    """Get all stocks for current user."""
+    """Get all stocks for current user with real-time quotes."""
     try:
         stocks = get_all_stocks(user_id=current_user.id)
-        result = []
-        for s in stocks:
-            item = dict(s)
-            result.append(StockItem(
-                code=item['code'],
-                name=item['name'],
-                market=item.get('market', ''),
-                sector=item.get('sector', ''),
-                pre_market_time=item.get('pre_market_time'),
-                post_market_time=item.get('post_market_time'),
-                is_active=bool(item.get('is_active', True))
-            ))
-        return result
+
+        if not stocks:
+            return []
+
+        # Batch fetch realtime quotes using tushare (more reliable than akshare)
+        try:
+            from src.data_sources.tushare_client import get_realtime_quotes
+
+            # Get all stock codes
+            stock_codes = [s['code'] for s in stocks]
+
+            # Fetch realtime quotes in batch
+            quotes_df = await asyncio.to_thread(get_realtime_quotes, stock_codes)
+
+            # Build a lookup dict for quick access
+            quotes_lookup = {}
+            if quotes_df is not None and not quotes_df.empty:
+                for _, row in quotes_df.iterrows():
+                    # The ts_code might have suffix, extract plain code
+                    ts_code = str(row.get('ts_code', ''))
+                    plain_code = ts_code.split('.')[0] if '.' in ts_code else ts_code
+                    quotes_lookup[plain_code] = row
+
+            # Merge quotes with stock data
+            results = []
+            for stock in stocks:
+                item = dict(stock)
+                code = stock['code']
+
+                if code in quotes_lookup:
+                    row = quotes_lookup[code]
+                    # Map tushare fields to our schema
+                    price = row.get('price')
+                    pct_chg = row.get('pct_chg')
+                    vol = row.get('vol')
+
+                    if price is not None and pd.notna(price):
+                        item['price'] = float(price)
+                    if pct_chg is not None and pd.notna(pct_chg):
+                        item['change_pct'] = float(pct_chg)
+                    if vol is not None and pd.notna(vol):
+                        # tushare vol is in shares, convert to hands (100 shares = 1 hand)
+                        item['volume'] = float(vol)
+
+                results.append(StockItem(**item))
+
+            return results
+
+        except ImportError:
+            # Fallback to old akshare method if tushare not available
+            print("TuShare not available, falling back to akshare")
+
+            def fetch_single_quote(stock):
+                item = dict(stock)
+                try:
+                    df = ak.stock_bid_ask_em(symbol=stock['code'])
+                    if not df.empty:
+                        info = dict(zip(df['item'], df['value']))
+                        price = info.get('最新') or info.get('最新价')
+                        change = info.get('涨幅') or info.get('涨跌幅')
+                        vol = info.get('总手') or info.get('成交量')
+
+                        if price is not None and str(price) != '':
+                            item['price'] = float(price)
+                        if change is not None and str(change) != '':
+                            item['change_pct'] = float(change)
+                        if vol is not None and str(vol) != '':
+                            v = float(vol)
+                            if info.get('总手') is not None:
+                                v = v * 100
+                            item['volume'] = v
+                except Exception:
+                    pass
+                return StockItem(**item)
+
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = await loop.run_in_executor(None, lambda: list(executor.map(fetch_single_quote, stocks)))
+
+            return results
+
+        except Exception as e:
+            print(f"Error fetching realtime quotes: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return stocks without realtime data
+            return [StockItem(**dict(s)) for s in stocks]
+
     except Exception as e:
         print(f"Error reading stocks: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -551,4 +636,478 @@ async def get_batch_stock_quotes(codes: str, current_user: User = Depends(get_cu
         return sanitize_data({"quotes": results})
     except Exception as e:
         print(f"Error in batch quotes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
+# Professional Stock Analysis Endpoints
+# ====================================================================
+
+@router.get("/{code}/financials")
+async def get_stock_financials(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get financial health diagnosis data.
+
+    Cache TTL: 1 day (1440 min)
+    """
+    cache_key = f"financials_{code}"
+    cached = stock_feature_cache.get(cache_key, ttl_minutes=1440)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "indicators": [],
+            "income": [],
+            "balance": [],
+            "cashflow": [],
+            "health_score": None,
+            "summary": {}
+        }
+
+        # Fetch all financial data in parallel using threads
+        loop = asyncio.get_event_loop()
+
+        indicators_task = loop.run_in_executor(None, lambda: get_financial_indicators(code, 8))
+        income_task = loop.run_in_executor(None, lambda: get_income_statement(code, 4))
+        balance_task = loop.run_in_executor(None, lambda: get_balance_sheet(code, 4))
+        cashflow_task = loop.run_in_executor(None, lambda: get_cashflow_statement(code, 4))
+
+        indicators_df, income_df, balance_df, cashflow_df = await asyncio.gather(
+            indicators_task, income_task, balance_task, cashflow_task
+        )
+
+        # Process indicators
+        if indicators_df is not None and not indicators_df.empty:
+            result["indicators"] = sanitize_data(indicators_df.to_dict('records'))
+
+            # Calculate health score based on latest indicators
+            latest = indicators_df.iloc[0]
+            score = 0
+            count = 0
+
+            # ROE scoring (higher is better, >15% is good)
+            if pd.notna(latest.get('roe')):
+                roe = float(latest['roe'])
+                if roe > 20: score += 25
+                elif roe > 15: score += 20
+                elif roe > 10: score += 15
+                elif roe > 5: score += 10
+                else: score += 5
+                count += 1
+
+            # Debt ratio scoring (lower is better, <60% is good)
+            if pd.notna(latest.get('debt_to_assets')):
+                debt = float(latest['debt_to_assets'])
+                if debt < 40: score += 25
+                elif debt < 50: score += 20
+                elif debt < 60: score += 15
+                elif debt < 70: score += 10
+                else: score += 5
+                count += 1
+
+            # Current ratio (>1.5 is good)
+            if pd.notna(latest.get('current_ratio')):
+                cr = float(latest['current_ratio'])
+                if cr > 2: score += 25
+                elif cr > 1.5: score += 20
+                elif cr > 1: score += 15
+                else: score += 10
+                count += 1
+
+            # Gross profit margin (higher is better)
+            if pd.notna(latest.get('grossprofit_margin')):
+                gpm = float(latest['grossprofit_margin'])
+                if gpm > 40: score += 25
+                elif gpm > 30: score += 20
+                elif gpm > 20: score += 15
+                else: score += 10
+                count += 1
+
+            if count > 0:
+                result["health_score"] = round(score / count, 1)
+
+            result["summary"] = {
+                "roe": float(latest.get('roe', 0)) if pd.notna(latest.get('roe')) else None,
+                "netprofit_margin": float(latest.get('netprofit_margin', 0)) if pd.notna(latest.get('netprofit_margin')) else None,
+                "debt_to_assets": float(latest.get('debt_to_assets', 0)) if pd.notna(latest.get('debt_to_assets')) else None,
+                "grossprofit_margin": float(latest.get('grossprofit_margin', 0)) if pd.notna(latest.get('grossprofit_margin')) else None,
+                "current_ratio": float(latest.get('current_ratio', 0)) if pd.notna(latest.get('current_ratio')) else None,
+                "quick_ratio": float(latest.get('quick_ratio', 0)) if pd.notna(latest.get('quick_ratio')) else None,
+                "eps": float(latest.get('eps', 0)) if pd.notna(latest.get('eps')) else None,
+                "bps": float(latest.get('bps', 0)) if pd.notna(latest.get('bps')) else None,
+            }
+
+        if income_df is not None and not income_df.empty:
+            result["income"] = sanitize_data(income_df.to_dict('records'))
+
+        if balance_df is not None and not balance_df.empty:
+            result["balance"] = sanitize_data(balance_df.to_dict('records'))
+
+        if cashflow_df is not None and not cashflow_df.empty:
+            result["cashflow"] = sanitize_data(cashflow_df.to_dict('records'))
+
+        stock_feature_cache.set(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching financial data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/shareholders")
+async def get_stock_shareholders(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get shareholder structure analysis data.
+
+    Cache TTL: 6 hours
+    """
+    cache_key = f"shareholders_{code}"
+    cached = stock_feature_cache.get(cache_key, ttl_minutes=360)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "top10_holders": [],
+            "holder_number_trend": [],
+            "concentration_change": None,
+            "latest_period": None
+        }
+
+        loop = asyncio.get_event_loop()
+
+        holders_task = loop.run_in_executor(None, lambda: get_top10_holders(code, 4))
+        number_task = loop.run_in_executor(None, lambda: get_shareholder_number(code, 12))
+
+        holders_df, number_df = await asyncio.gather(holders_task, number_task)
+
+        if holders_df is not None and not holders_df.empty:
+            # Group by period
+            periods = holders_df['end_date'].unique()
+            grouped_holders = []
+            for period in sorted(periods, reverse=True):
+                period_data = holders_df[holders_df['end_date'] == period].to_dict('records')
+                grouped_holders.append({
+                    "period": period,
+                    "holders": sanitize_data(period_data)
+                })
+            result["top10_holders"] = grouped_holders
+
+            if len(periods) > 0:
+                result["latest_period"] = str(sorted(periods, reverse=True)[0])
+
+        if number_df is not None and not number_df.empty:
+            result["holder_number_trend"] = sanitize_data(number_df.to_dict('records'))
+
+            # Calculate concentration change
+            if len(number_df) >= 2:
+                latest = number_df.iloc[0]
+                previous = number_df.iloc[1]
+                if pd.notna(latest.get('holder_num')) and pd.notna(previous.get('holder_num')):
+                    change = (float(latest['holder_num']) - float(previous['holder_num'])) / float(previous['holder_num']) * 100
+                    result["concentration_change"] = {
+                        "value": round(change, 2),
+                        "trend": "decreasing" if change < 0 else "increasing",
+                        "signal": "positive" if change < -5 else ("negative" if change > 5 else "neutral")
+                    }
+
+        stock_feature_cache.set(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching shareholder data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/margin")
+async def get_stock_margin(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get leverage fund monitoring data.
+
+    Cache TTL: 30 minutes
+    """
+    cache_key = f"margin_{code}"
+    cached = stock_feature_cache.get(cache_key, ttl_minutes=30)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "margin_data": [],
+            "summary": {},
+            "sentiment": None
+        }
+
+        margin_df = await asyncio.to_thread(get_margin_detail, code, 30)
+
+        if margin_df is not None and not margin_df.empty:
+            result["margin_data"] = sanitize_data(margin_df.to_dict('records'))
+
+            # Calculate summary
+            latest = margin_df.iloc[0]
+            result["summary"] = {
+                "rzye": float(latest.get('rzye', 0)) if pd.notna(latest.get('rzye')) else None,
+                "rqye": float(latest.get('rqye', 0)) if pd.notna(latest.get('rqye')) else None,
+                "rzmre": float(latest.get('rzmre', 0)) if pd.notna(latest.get('rzmre')) else None,
+                "rqmcl": float(latest.get('rqmcl', 0)) if pd.notna(latest.get('rqmcl')) else None,
+                "trade_date": str(latest.get('trade_date', ''))
+            }
+
+            # Calculate financing/lending ratio and sentiment
+            rzye = result["summary"]["rzye"]
+            rqye = result["summary"]["rqye"]
+            if rzye and rqye and rqye > 0:
+                ratio = rzye / rqye
+                result["sentiment"] = {
+                    "financing_ratio": round(ratio, 2),
+                    "signal": "bullish" if ratio > 100 else ("neutral" if ratio > 10 else "bearish"),
+                    "description": "融资远大于融券，市场看多" if ratio > 100 else ("融资融券相对平衡" if ratio > 10 else "融券相对较多，谨慎")
+                }
+
+            # Calculate trend (compare with 5 days ago)
+            if len(margin_df) >= 5:
+                latest_rzye = float(margin_df.iloc[0].get('rzye', 0)) if pd.notna(margin_df.iloc[0].get('rzye')) else 0
+                old_rzye = float(margin_df.iloc[4].get('rzye', 0)) if pd.notna(margin_df.iloc[4].get('rzye')) else 0
+                if old_rzye > 0:
+                    change = (latest_rzye - old_rzye) / old_rzye * 100
+                    result["summary"]["rzye_5d_change"] = round(change, 2)
+
+        stock_feature_cache.set(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching margin data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/events")
+async def get_stock_events(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get event-driven calendar data.
+
+    Cache TTL: 1 hour
+    """
+    cache_key = f"events_{code}"
+    cached = stock_feature_cache.get(cache_key, ttl_minutes=60)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "forecasts": [],
+            "share_unlock": [],
+            "dividends": [],
+            "upcoming_events": []
+        }
+
+        loop = asyncio.get_event_loop()
+
+        forecast_task = loop.run_in_executor(None, lambda: get_forecast(code))
+        unlock_task = loop.run_in_executor(None, lambda: get_share_float(code))
+        dividend_task = loop.run_in_executor(None, lambda: get_dividend(code))
+
+        forecast_df, unlock_df, dividend_df = await asyncio.gather(
+            forecast_task, unlock_task, dividend_task
+        )
+
+        today = datetime.now().strftime('%Y%m%d')
+
+        if forecast_df is not None and not forecast_df.empty:
+            result["forecasts"] = sanitize_data(forecast_df.head(10).to_dict('records'))
+
+            # Add to upcoming events
+            for _, row in forecast_df.head(3).iterrows():
+                if pd.notna(row.get('ann_date')):
+                    result["upcoming_events"].append({
+                        "type": "forecast",
+                        "date": str(row.get('ann_date', '')),
+                        "title": f"业绩预告: {row.get('type', '未知')}",
+                        "detail": f"预计变动: {row.get('p_change_min', 'N/A')}% ~ {row.get('p_change_max', 'N/A')}%",
+                        "sentiment": "positive" if row.get('type', '') in ['预增', '扭亏', '续盈', '略增'] else "negative"
+                    })
+
+        if unlock_df is not None and not unlock_df.empty:
+            result["share_unlock"] = sanitize_data(unlock_df.head(10).to_dict('records'))
+
+            # Add future unlocks to upcoming events
+            for _, row in unlock_df.iterrows():
+                float_date = str(row.get('float_date', ''))
+                if float_date >= today:
+                    result["upcoming_events"].append({
+                        "type": "unlock",
+                        "date": float_date,
+                        "title": "限售解禁",
+                        "detail": f"解禁数量: {row.get('float_share', 'N/A')}万股, 占比: {row.get('float_ratio', 'N/A')}%",
+                        "sentiment": "warning"
+                    })
+
+        if dividend_df is not None and not dividend_df.empty:
+            result["dividends"] = sanitize_data(dividend_df.head(10).to_dict('records'))
+
+            # Add recent/upcoming dividends
+            for _, row in dividend_df.head(3).iterrows():
+                ex_date = str(row.get('ex_date', ''))
+                if ex_date and ex_date >= (datetime.now() - timedelta(days=30)).strftime('%Y%m%d'):
+                    cash_div = row.get('cash_div_tax', 0)
+                    stk_div = row.get('stk_div', 0)
+                    result["upcoming_events"].append({
+                        "type": "dividend",
+                        "date": ex_date,
+                        "title": "分红除权",
+                        "detail": f"每股现金: {cash_div}元" + (f", 每股送股: {stk_div}" if stk_div else ""),
+                        "sentiment": "positive" if cash_div else "neutral"
+                    })
+
+        # Sort upcoming events by date
+        result["upcoming_events"].sort(key=lambda x: x["date"], reverse=True)
+
+        stock_feature_cache.set(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching event data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/quant")
+async def get_stock_quant(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get quantitative signal dashboard data.
+
+    Cache TTL: 15 minutes
+    """
+    cache_key = f"quant_{code}"
+    cached = stock_feature_cache.get(cache_key, ttl_minutes=15)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "factors": [],
+            "chip_data": [],
+            "signals": {},
+            "overall_signal": None
+        }
+
+        loop = asyncio.get_event_loop()
+
+        factors_task = loop.run_in_executor(None, lambda: get_stock_factors(code, 60))
+        chip_task = loop.run_in_executor(None, lambda: get_chip_performance(code))
+
+        factors_df, chip_df = await asyncio.gather(factors_task, chip_task)
+
+        signals = {
+            "macd": {"signal": "neutral", "value": None},
+            "kdj": {"signal": "neutral", "value": None},
+            "rsi": {"signal": "neutral", "value": None},
+            "boll": {"signal": "neutral", "value": None}
+        }
+
+        if factors_df is not None and not factors_df.empty:
+            result["factors"] = sanitize_data(factors_df.to_dict('records'))
+
+            latest = factors_df.iloc[0]
+
+            # MACD signal
+            macd = latest.get('macd')
+            macd_dif = latest.get('macd_dif')
+            macd_dea = latest.get('macd_dea')
+            if pd.notna(macd):
+                signals["macd"]["value"] = round(float(macd), 4)
+                if pd.notna(macd_dif) and pd.notna(macd_dea):
+                    if float(macd_dif) > float(macd_dea):
+                        signals["macd"]["signal"] = "bullish"
+                    else:
+                        signals["macd"]["signal"] = "bearish"
+
+            # KDJ signal
+            kdj_k = latest.get('kdj_k')
+            kdj_d = latest.get('kdj_d')
+            kdj_j = latest.get('kdj_j')
+            if pd.notna(kdj_j):
+                signals["kdj"]["value"] = round(float(kdj_j), 2)
+                if float(kdj_j) > 80:
+                    signals["kdj"]["signal"] = "overbought"
+                elif float(kdj_j) < 20:
+                    signals["kdj"]["signal"] = "oversold"
+                elif pd.notna(kdj_k) and pd.notna(kdj_d) and float(kdj_k) > float(kdj_d):
+                    signals["kdj"]["signal"] = "bullish"
+                elif pd.notna(kdj_k) and pd.notna(kdj_d):
+                    signals["kdj"]["signal"] = "bearish"
+
+            # RSI signal
+            rsi_6 = latest.get('rsi_6')
+            if pd.notna(rsi_6):
+                signals["rsi"]["value"] = round(float(rsi_6), 2)
+                if float(rsi_6) > 70:
+                    signals["rsi"]["signal"] = "overbought"
+                elif float(rsi_6) < 30:
+                    signals["rsi"]["signal"] = "oversold"
+                elif float(rsi_6) > 50:
+                    signals["rsi"]["signal"] = "bullish"
+                else:
+                    signals["rsi"]["signal"] = "bearish"
+
+            # BOLL signal
+            close = latest.get('close')
+            boll_upper = latest.get('boll_upper')
+            boll_mid = latest.get('boll_mid')
+            boll_lower = latest.get('boll_lower')
+            if pd.notna(close) and pd.notna(boll_upper) and pd.notna(boll_lower):
+                signals["boll"]["value"] = {
+                    "upper": round(float(boll_upper), 2),
+                    "mid": round(float(boll_mid), 2) if pd.notna(boll_mid) else None,
+                    "lower": round(float(boll_lower), 2),
+                    "close": round(float(close), 2)
+                }
+                if float(close) >= float(boll_upper):
+                    signals["boll"]["signal"] = "overbought"
+                elif float(close) <= float(boll_lower):
+                    signals["boll"]["signal"] = "oversold"
+                elif float(close) > float(boll_mid) if pd.notna(boll_mid) else float(boll_upper + boll_lower) / 2:
+                    signals["boll"]["signal"] = "bullish"
+                else:
+                    signals["boll"]["signal"] = "bearish"
+
+        result["signals"] = signals
+
+        # Calculate overall signal
+        bullish_count = sum(1 for s in signals.values() if s["signal"] in ["bullish", "oversold"])
+        bearish_count = sum(1 for s in signals.values() if s["signal"] in ["bearish", "overbought"])
+
+        if bullish_count >= 3:
+            result["overall_signal"] = {"direction": "bullish", "strength": "strong", "score": bullish_count}
+        elif bullish_count >= 2:
+            result["overall_signal"] = {"direction": "bullish", "strength": "moderate", "score": bullish_count}
+        elif bearish_count >= 3:
+            result["overall_signal"] = {"direction": "bearish", "strength": "strong", "score": -bearish_count}
+        elif bearish_count >= 2:
+            result["overall_signal"] = {"direction": "bearish", "strength": "moderate", "score": -bearish_count}
+        else:
+            result["overall_signal"] = {"direction": "neutral", "strength": "weak", "score": bullish_count - bearish_count}
+
+        # Chip distribution
+        if chip_df is not None and not chip_df.empty:
+            result["chip_data"] = sanitize_data(chip_df.head(10).to_dict('records'))
+
+            latest_chip = chip_df.iloc[0]
+            result["chip_summary"] = {
+                "winner_rate": float(latest_chip.get('winner_rate', 0)) if pd.notna(latest_chip.get('winner_rate')) else None,
+                "cost_5pct": float(latest_chip.get('cost_5pct', 0)) if pd.notna(latest_chip.get('cost_5pct')) else None,
+                "cost_50pct": float(latest_chip.get('cost_50pct', 0)) if pd.notna(latest_chip.get('cost_50pct')) else None,
+                "cost_95pct": float(latest_chip.get('cost_95pct', 0)) if pd.notna(latest_chip.get('cost_95pct')) else None,
+                "weight_avg": float(latest_chip.get('weight_avg', 0)) if pd.notna(latest_chip.get('weight_avg')) else None,
+            }
+
+        stock_feature_cache.set(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching quant data for {code}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
