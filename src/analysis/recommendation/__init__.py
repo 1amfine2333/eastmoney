@@ -1,9 +1,13 @@
 """
-AI Recommendation System - 智能投资推荐系统
+AI Recommendation System v2 - 智能投资推荐系统
 
-Provides AI-powered stock and fund recommendations for both short-term (7+ days)
-and long-term (3+ months) investment horizons.
+Quantitative factor-based stock and fund recommendation engine.
+Key principles:
+- Quantitative models select, LLM explains
+- Predict breakouts, don't chase rallies
+- Quality and risk-adjusted returns over raw performance
 """
 from .engine import RecommendationEngine
+from .engine_v2 import RecommendationEngineV2, get_v2_recommendations
 
-__all__ = ['RecommendationEngine']
+__all__ = ['RecommendationEngine', 'RecommendationEngineV2', 'get_v2_recommendations']

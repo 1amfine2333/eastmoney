@@ -82,7 +82,8 @@ class SchedulerManager:
         self.refresh_all_jobs()
         self.add_dashboard_refresh_job()
         self.add_daily_snapshot_job()
-        
+        self.add_factor_computation_job()
+
     def refresh_all_jobs(self):
         """Clear all and reload from DB (All users)"""
         self.scheduler.remove_all_jobs()
@@ -98,6 +99,8 @@ class SchedulerManager:
         self.add_dashboard_refresh_job()
         # Re-add daily snapshot job
         self.add_daily_snapshot_job()
+        # Re-add factor computation job
+        self.add_factor_computation_job()
 
     def add_dashboard_refresh_job(self):
         """Schedule dashboard cache refresh every 5 minutes"""
@@ -135,7 +138,38 @@ class SchedulerManager:
                 max_instances=1,
                 coalesce=True
             )
-            print("Scheduled daily portfolio snapshots at 17:00")
+            print("Scheduled daily portfolio snapshots at 23:00")
+
+    def add_factor_computation_job(self):
+        """Schedule daily factor computation at 6:00 AM (before market open)"""
+        job_id = "daily_factor_computation"
+        if not self.scheduler.get_job(job_id):
+            self.scheduler.add_job(
+                self.run_daily_factor_computation,
+                trigger=CronTrigger(hour=6, minute=0),
+                id=job_id,
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True
+            )
+            print("Scheduled daily factor computation at 06:00")
+
+    def run_daily_factor_computation(self):
+        """Worker to run daily factor computation for recommendation system v2"""
+        # Check if today is a trading day
+        if not trading_calendar.is_trading_day():
+            print("Skipping factor computation - not a trading day")
+            return
+
+        try:
+            from src.analysis.recommendation.factor_store.daily_computer import run_daily_computation
+            print("Starting daily factor computation...")
+            run_daily_computation()
+            print("Daily factor computation completed.")
+        except ImportError as e:
+            print(f"Factor computation module not available: {e}")
+        except Exception as e:
+            print(f"Error running daily factor computation: {e}")
 
     def create_all_portfolio_snapshots(self):
         """Create snapshots for all portfolios (called by scheduler)"""

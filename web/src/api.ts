@@ -2515,3 +2515,265 @@ export const stressTestChat = async (
     });
     return response.data;
 };
+
+
+// ====================================================================
+// Recommendation Engine V2 API - Quantitative Factor-Based
+// ====================================================================
+
+// V2 Factor Data Types
+export interface StockFactors {
+    // Technical factors
+    consolidation_score?: number;
+    volume_precursor?: number;
+    ma_convergence?: number;
+    rsi?: number;
+    macd_signal?: string;
+    bollinger_position?: number;
+    // Fundamental factors
+    roe?: number;
+    roe_yoy?: number;
+    gross_margin?: number;
+    ocf_to_profit?: number;
+    peg_ratio?: number;
+    pe_percentile?: number;
+    pb_percentile?: number;
+    revenue_cagr_3y?: number;
+    profit_cagr_3y?: number;
+    // Sentiment/Money flow factors
+    main_inflow_5d?: number;
+    main_inflow_trend?: string;
+    north_inflow_5d?: number;
+    retail_outflow_ratio?: number;
+    is_accumulation?: boolean;
+    // Scores
+    short_term_score?: number;
+    long_term_score?: number;
+    quality_score?: number;
+    growth_score?: number;
+    valuation_score?: number;
+    price?: number;
+}
+
+export interface FundFactors {
+    // Risk factors
+    sharpe_20d?: number;
+    sharpe_1y?: number;
+    sortino_1y?: number;
+    calmar_1y?: number;
+    max_drawdown_1y?: number;
+    volatility_60d?: number;
+    volatility_1y?: number;
+    // Performance factors
+    return_1w?: number;
+    return_1m?: number;
+    return_3m?: number;
+    return_6m?: number;
+    return_1y?: number;
+    return_rank_1m?: number;
+    return_rank_1y?: number;
+    // Manager factors
+    manager_tenure_years?: number;
+    manager_alpha_bull?: number;
+    manager_alpha_bear?: number;
+    style_consistency?: number;
+    fund_size?: number;
+    // Scores
+    short_term_score?: number;
+    long_term_score?: number;
+    momentum_score?: number;
+    alpha_score?: number;
+}
+
+export interface RecommendationStockV2 {
+    code: string;
+    name: string;
+    industry?: string;
+    score: number;
+    factors: StockFactors;
+    explanation?: string;
+    catalysts?: string[];
+    risks?: string[];
+    strategy?: string;
+}
+
+export interface RecommendationFundV2 {
+    code: string;
+    name: string;
+    type?: string;
+    score: number;
+    factors: FundFactors;
+    explanation?: string;
+    catalysts?: string[];
+    risks?: string[];
+    strategy?: string;
+}
+
+export interface RecommendationResultV2 {
+    mode: string;
+    generated_at: string;
+    trade_date: string;
+    engine_version: string;
+    short_term?: {
+        stocks: RecommendationStockV2[];
+        funds: RecommendationFundV2[];
+        market_view?: string;
+    };
+    long_term?: {
+        stocks: RecommendationStockV2[];
+        funds: RecommendationFundV2[];
+        macro_view?: string;
+    };
+    metadata?: {
+        factor_computation_time?: number;
+        explanation_time?: number;
+        total_time?: number;
+    };
+}
+
+export interface RecommendationRequestV2 {
+    mode: 'short' | 'long' | 'all';
+    stock_limit?: number;
+    fund_limit?: number;
+    use_llm?: boolean;
+}
+
+export interface FactorStatus {
+    stock_factors: {
+        count: number;
+        latest_date?: string;
+    };
+    fund_factors: {
+        count: number;
+        latest_date?: string;
+    };
+    last_computation?: string;
+}
+
+export interface RecommendationPerformance {
+    rec_type: string;
+    total_count: number;
+    hit_target_count: number;
+    hit_stop_count: number;
+    avg_return: number;
+    win_rate: number;
+}
+
+// V2 Generate Recommendations
+export const generateRecommendationsV2 = async (
+    request: RecommendationRequestV2
+): Promise<RecommendationResultV2> => {
+    const response = await api.post('/recommend/v2/generate', request);
+    return response.data;
+};
+
+// V2 Get Short-Term Stocks
+export const getShortTermStocksV2 = async (
+    limit: number = 20,
+    tradeDate?: string
+): Promise<{ stocks: RecommendationStockV2[]; trade_date: string }> => {
+    const params: Record<string, any> = { limit };
+    if (tradeDate) params.trade_date = tradeDate;
+    const response = await api.get('/recommend/v2/stocks/short', { params });
+    return response.data;
+};
+
+// V2 Get Long-Term Stocks
+export const getLongTermStocksV2 = async (
+    limit: number = 20,
+    tradeDate?: string
+): Promise<{ stocks: RecommendationStockV2[]; trade_date: string }> => {
+    const params: Record<string, any> = { limit };
+    if (tradeDate) params.trade_date = tradeDate;
+    const response = await api.get('/recommend/v2/stocks/long', { params });
+    return response.data;
+};
+
+// V2 Get Short-Term Funds
+export const getShortTermFundsV2 = async (
+    limit: number = 20,
+    tradeDate?: string
+): Promise<{ funds: RecommendationFundV2[]; trade_date: string }> => {
+    const params: Record<string, any> = { limit };
+    if (tradeDate) params.trade_date = tradeDate;
+    const response = await api.get('/recommend/v2/funds/short', { params });
+    return response.data;
+};
+
+// V2 Get Long-Term Funds
+export const getLongTermFundsV2 = async (
+    limit: number = 20,
+    tradeDate?: string
+): Promise<{ funds: RecommendationFundV2[]; trade_date: string }> => {
+    const params: Record<string, any> = { limit };
+    if (tradeDate) params.trade_date = tradeDate;
+    const response = await api.get('/recommend/v2/funds/long', { params });
+    return response.data;
+};
+
+// V2 Analyze Single Stock
+export const analyzeStockV2 = async (
+    code: string,
+    tradeDate?: string
+): Promise<{
+    code: string;
+    short_term: RecommendationStockV2;
+    long_term: RecommendationStockV2;
+    trade_date: string;
+}> => {
+    const params: Record<string, string> = {};
+    if (tradeDate) params.trade_date = tradeDate;
+    const response = await api.get(`/recommend/v2/analyze/stock/${code}`, { params });
+    return response.data;
+};
+
+// V2 Analyze Single Fund
+export const analyzeFundV2 = async (
+    code: string,
+    tradeDate?: string
+): Promise<{
+    code: string;
+    short_term: RecommendationFundV2;
+    long_term: RecommendationFundV2;
+    trade_date: string;
+}> => {
+    const params: Record<string, string> = {};
+    if (tradeDate) params.trade_date = tradeDate;
+    const response = await api.get(`/recommend/v2/analyze/fund/${code}`, { params });
+    return response.data;
+};
+
+// V2 Get Recommendation Performance
+export const getRecommendationPerformanceV2 = async (
+    recType?: string,
+    startDate?: string,
+    endDate?: string
+): Promise<{ performance: RecommendationPerformance[] }> => {
+    const params: Record<string, string> = {};
+    if (recType) params.rec_type = recType;
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+    const response = await api.get('/recommend/v2/performance', { params });
+    return response.data;
+};
+
+// V2 Trigger Factor Computation
+export const computeFactorsV2 = async (
+    targetDate?: string
+): Promise<{
+    message: string;
+    stocks_computed: number;
+    funds_computed: number;
+    computation_time: number;
+}> => {
+    const data: Record<string, string> = {};
+    if (targetDate) data.target_date = targetDate;
+    const response = await api.post('/recommend/v2/compute-factors', data);
+    return response.data;
+};
+
+// V2 Get Factor Status
+export const getFactorStatusV2 = async (): Promise<FactorStatus> => {
+    const response = await api.get('/recommend/v2/factor-status');
+    return response.data;
+};

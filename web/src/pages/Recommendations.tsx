@@ -44,18 +44,26 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import TuneIcon from '@mui/icons-material/Tune';
 import CloseIcon from '@mui/icons-material/Close';
 import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import ScienceIcon from '@mui/icons-material/Science';
 import {
     generateRecommendations,
     fetchLatestRecommendations,
     getUserPreferences,
     pollRecommendationTask,
-
+    generateRecommendationsV2,
+    getFactorStatusV2,
 } from '../api';
 
-import type {RecommendationResult,
+import type {
+    RecommendationResult,
     RecommendationStock,
     RecommendationFund,
-    TaskStatusResponse,} from '../api';
+    TaskStatusResponse,
+    RecommendationResultV2,
+    RecommendationStockV2,
+    RecommendationFundV2,
+    FactorStatus,
+} from '../api';
 
 import PreferencesModal from '../components/PreferencesModal';
 
@@ -847,6 +855,324 @@ interface FundTableProps {
     onFundClick?: (fund: RecommendationFund) => void;
 }
 
+// --- V2 Stock Table Component (with factor display) ---
+
+interface StockTableV2Props {
+    stocks: RecommendationStockV2[];
+    isShortTerm: boolean;
+    onStockClick?: (stock: RecommendationStockV2) => void;
+}
+
+const StockTableV2 = ({ stocks, isShortTerm, onStockClick }: StockTableV2Props) => {
+    const { t } = useTranslation();
+
+    if (!stocks || stocks.length === 0) {
+        return <Typography className="text-slate-400 text-center py-8">{t('recommendations.no_data')}</Typography>;
+    }
+
+    return (
+        <TableContainer>
+            <Table size="small">
+                <TableHead>
+                    <TableRow className="bg-slate-50">
+                        <TableCell className="font-bold text-slate-600 text-xs w-8">{t('recommendations.table.rank')}</TableCell>
+                        <TableCell className="font-bold text-slate-600 text-xs">{t('recommendations.table.code')}</TableCell>
+                        <TableCell className="font-bold text-slate-600 text-xs">{t('recommendations.table.name')}</TableCell>
+                        <TableCell className="font-bold text-slate-600 text-xs w-28">{t('recommendations.table.score')}</TableCell>
+                        {isShortTerm ? (
+                            <>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.consolidation_score_tip')}>
+                                        <span>{t('recommendations.v2.consolidation')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.volume_precursor_tip')}>
+                                        <span>{t('recommendations.v2.volume')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.main_inflow_tip')}>
+                                        <span>{t('recommendations.v2.inflow_5d')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                            </>
+                        ) : (
+                            <>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.roe_tip')}>
+                                        <span>ROE</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.peg_tip')}>
+                                        <span>PEG</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.quality_score_tip')}>
+                                        <span>{t('recommendations.v2.quality')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                            </>
+                        )}
+                        <TableCell className="font-bold text-slate-600 text-xs">{t('recommendations.v2.strategy')}</TableCell>
+                    </TableRow>
+                </TableHead>
+                <TableBody>
+                    {stocks.map((stock, index) => (
+                        <TableRow
+                            key={stock.code}
+                            className="hover:bg-blue-50 transition-colors cursor-pointer"
+                            onClick={() => onStockClick?.(stock)}
+                        >
+                            <TableCell>
+                                <Box className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                    index < 3 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                    {index + 1}
+                                </Box>
+                            </TableCell>
+                            <TableCell>
+                                <NumberMono className="text-sm font-semibold text-slate-700">{stock.code}</NumberMono>
+                            </TableCell>
+                            <TableCell>
+                                <Box>
+                                    <Typography className="text-sm font-medium text-slate-800 truncate max-w-[120px]">
+                                        {stock.name}
+                                    </Typography>
+                                    {stock.industry && (
+                                        <Typography className="text-[10px] text-slate-400">{stock.industry}</Typography>
+                                    )}
+                                </Box>
+                            </TableCell>
+                            <TableCell>
+                                <ScoreBar score={stock.score} />
+                            </TableCell>
+                            {isShortTerm ? (
+                                <>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (stock.factors?.consolidation_score || 0) >= 70 ? 'text-green-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {stock.factors?.consolidation_score?.toFixed(0) || '-'}
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (stock.factors?.volume_precursor || 0) >= 60 ? 'text-blue-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {stock.factors?.volume_precursor?.toFixed(0) || '-'}
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (stock.factors?.main_inflow_5d || 0) > 0 ? 'text-red-600' : 'text-green-600'
+                                        }`}>
+                                            {formatAmount(stock.factors?.main_inflow_5d)}
+                                        </NumberMono>
+                                    </TableCell>
+                                </>
+                            ) : (
+                                <>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (stock.factors?.roe || 0) >= 15 ? 'text-green-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {stock.factors?.roe?.toFixed(1) || '-'}%
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (stock.factors?.peg_ratio || 0) > 0 && (stock.factors?.peg_ratio || 0) < 1
+                                                ? 'text-green-600 font-semibold'
+                                                : 'text-slate-600'
+                                        }`}>
+                                            {stock.factors?.peg_ratio?.toFixed(2) || '-'}
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (stock.factors?.quality_score || 0) >= 70 ? 'text-green-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {stock.factors?.quality_score?.toFixed(0) || '-'}
+                                        </NumberMono>
+                                    </TableCell>
+                                </>
+                            )}
+                            <TableCell>
+                                <Chip
+                                    label={stock.strategy || (isShortTerm ? t('recommendations.v2.breakout') : t('recommendations.v2.quality'))}
+                                    size="small"
+                                    className={`h-5 text-[10px] font-medium ${
+                                        isShortTerm ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
+                                    }`}
+                                />
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </TableContainer>
+    );
+};
+
+// --- V2 Fund Table Component (with factor display) ---
+
+interface FundTableV2Props {
+    funds: RecommendationFundV2[];
+    isShortTerm: boolean;
+    onFundClick?: (fund: RecommendationFundV2) => void;
+}
+
+const FundTableV2 = ({ funds, isShortTerm, onFundClick }: FundTableV2Props) => {
+    const { t } = useTranslation();
+
+    if (!funds || funds.length === 0) {
+        return <Typography className="text-slate-400 text-center py-8">{t('recommendations.no_data')}</Typography>;
+    }
+
+    return (
+        <TableContainer>
+            <Table size="small">
+                <TableHead>
+                    <TableRow className="bg-slate-50">
+                        <TableCell className="font-bold text-slate-600 text-xs w-8">{t('recommendations.table.rank')}</TableCell>
+                        <TableCell className="font-bold text-slate-600 text-xs">{t('recommendations.table.code')}</TableCell>
+                        <TableCell className="font-bold text-slate-600 text-xs">{t('recommendations.table.name')}</TableCell>
+                        <TableCell className="font-bold text-slate-600 text-xs w-28">{t('recommendations.table.score')}</TableCell>
+                        {isShortTerm ? (
+                            <>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.sharpe_tip')}>
+                                        <span>{t('recommendations.v2.sharpe_20d')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.return_1m_tip')}>
+                                        <span>{t('recommendations.table.return_1m')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.volatility_tip')}>
+                                        <span>{t('recommendations.v2.volatility')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                            </>
+                        ) : (
+                            <>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.sharpe_1y_tip')}>
+                                        <span>{t('recommendations.v2.sharpe_1y')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.max_dd_tip')}>
+                                        <span>{t('recommendations.v2.max_dd')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                                <TableCell className="font-bold text-slate-600 text-xs text-right">
+                                    <Tooltip title={t('recommendations.v2.manager_tenure_tip')}>
+                                        <span>{t('recommendations.v2.tenure')}</span>
+                                    </Tooltip>
+                                </TableCell>
+                            </>
+                        )}
+                        <TableCell className="font-bold text-slate-600 text-xs">{t('recommendations.v2.strategy')}</TableCell>
+                    </TableRow>
+                </TableHead>
+                <TableBody>
+                    {funds.map((fund, index) => (
+                        <TableRow
+                            key={fund.code}
+                            className="hover:bg-purple-50 transition-colors cursor-pointer"
+                            onClick={() => onFundClick?.(fund)}
+                        >
+                            <TableCell>
+                                <Box className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                    index < 3 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                    {index + 1}
+                                </Box>
+                            </TableCell>
+                            <TableCell>
+                                <NumberMono className="text-sm font-semibold text-slate-700">{fund.code}</NumberMono>
+                            </TableCell>
+                            <TableCell>
+                                <Box>
+                                    <Typography className="text-sm font-medium text-slate-800 truncate max-w-[160px]">
+                                        {fund.name}
+                                    </Typography>
+                                    {fund.type && (
+                                        <Typography className="text-[10px] text-slate-400">{fund.type}</Typography>
+                                    )}
+                                </Box>
+                            </TableCell>
+                            <TableCell>
+                                <ScoreBar score={fund.score} />
+                            </TableCell>
+                            {isShortTerm ? (
+                                <>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (fund.factors?.sharpe_20d || 0) >= 1.5 ? 'text-green-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {fund.factors?.sharpe_20d?.toFixed(2) || '-'}
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <ColorVal val={fund.factors?.return_1m} suffix="%" />
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (fund.factors?.volatility_60d || 0) < 15 ? 'text-green-600' : 'text-orange-600'
+                                        }`}>
+                                            {fund.factors?.volatility_60d?.toFixed(1) || '-'}%
+                                        </NumberMono>
+                                    </TableCell>
+                                </>
+                            ) : (
+                                <>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (fund.factors?.sharpe_1y || 0) >= 1.0 ? 'text-green-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {fund.factors?.sharpe_1y?.toFixed(2) || '-'}
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            Math.abs(fund.factors?.max_drawdown_1y || 0) < 15 ? 'text-green-600' : 'text-red-600'
+                                        }`}>
+                                            {fund.factors?.max_drawdown_1y?.toFixed(1) || '-'}%
+                                        </NumberMono>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <NumberMono className={`text-sm ${
+                                            (fund.factors?.manager_tenure_years || 0) >= 3 ? 'text-green-600 font-semibold' : 'text-slate-600'
+                                        }`}>
+                                            {fund.factors?.manager_tenure_years?.toFixed(1) || '-'}{t('common.years')}
+                                        </NumberMono>
+                                    </TableCell>
+                                </>
+                            )}
+                            <TableCell>
+                                <Chip
+                                    label={fund.strategy || (isShortTerm ? t('recommendations.v2.momentum') : t('recommendations.v2.alpha'))}
+                                    size="small"
+                                    className={`h-5 text-[10px] font-medium ${
+                                        isShortTerm ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
+                                    }`}
+                                />
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </TableContainer>
+    );
+};
+
 const FundTable = ({ funds, isShortTerm, onFundClick }: FundTableProps) => {
     const { t } = useTranslation();
 
@@ -1207,17 +1533,563 @@ const RecommendationSection = ({
     );
 };
 
+// --- V2 Recommendation Section Component ---
+
+interface RecommendationSectionV2Props {
+    title: string;
+    subtitle: string;
+    icon: React.ReactNode;
+    stocks: RecommendationStockV2[];
+    funds: RecommendationFundV2[];
+    marketView?: string;
+    isShortTerm: boolean;
+    defaultExpanded?: boolean;
+}
+
+const RecommendationSectionV2 = ({
+    title,
+    subtitle,
+    icon,
+    stocks,
+    funds,
+    marketView,
+    isShortTerm,
+    defaultExpanded = true,
+}: RecommendationSectionV2Props) => {
+    const { t } = useTranslation();
+    const [tabValue, setTabValue] = useState(0);
+    const [expanded, setExpanded] = useState(defaultExpanded);
+
+    // Detail modal states for V2
+    const [selectedStock, setSelectedStock] = useState<RecommendationStockV2 | null>(null);
+    const [selectedFund, setSelectedFund] = useState<RecommendationFundV2 | null>(null);
+    const [stockModalOpen, setStockModalOpen] = useState(false);
+    const [fundModalOpen, setFundModalOpen] = useState(false);
+
+    const handleStockClick = useCallback((stock: RecommendationStockV2) => {
+        setSelectedStock(stock);
+        setStockModalOpen(true);
+    }, []);
+
+    const handleFundClick = useCallback((fund: RecommendationFundV2) => {
+        setSelectedFund(fund);
+        setFundModalOpen(true);
+    }, []);
+
+    return (
+        <Paper elevation={0} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+            {/* Section Header */}
+            <Box
+                className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
+                onClick={() => setExpanded(!expanded)}
+            >
+                <Box className="flex items-center gap-3">
+                    <Box className={`w-10 h-10 rounded-lg flex items-center justify-center ${isShortTerm ? 'bg-blue-100' : 'bg-purple-100'}`}>
+                        {icon}
+                    </Box>
+                    <Box>
+                        <Box className="flex items-center gap-2">
+                            <Typography variant="h6" className="font-bold text-slate-800">{title}</Typography>
+                            <Chip
+                                label="V2"
+                                size="small"
+                                className="h-4 text-[9px] font-bold bg-emerald-100 text-emerald-700"
+                            />
+                        </Box>
+                        <Typography variant="caption" className="text-slate-500">{subtitle}</Typography>
+                    </Box>
+                </Box>
+                <Box className="flex items-center gap-2">
+                    <Chip
+                        label={`${stocks?.length || 0} ${t('recommendations.tabs.stocks')}`}
+                        size="small"
+                        className="h-6 text-xs bg-slate-100 text-slate-600"
+                    />
+                    <Chip
+                        label={`${funds?.length || 0} ${t('recommendations.tabs.funds')}`}
+                        size="small"
+                        className="h-6 text-xs bg-slate-100 text-slate-600"
+                    />
+                    <IconButton size="small">
+                        {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                    </IconButton>
+                </Box>
+            </Box>
+
+            <Collapse in={expanded}>
+                {/* Market View Card */}
+                {marketView && (
+                    <Box className="px-5 pb-3">
+                        <Box className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                            <Box className="flex items-center gap-2 mb-2">
+                                <InsightsIcon className="text-slate-400 text-sm" />
+                                <Typography variant="caption" className="text-slate-500 font-bold uppercase">
+                                    {isShortTerm ? t('recommendations.market_view.title') : t('recommendations.v2.macro_view')}
+                                </Typography>
+                            </Box>
+                            <Typography variant="body2" className="text-slate-700">
+                                {marketView}
+                            </Typography>
+                        </Box>
+                    </Box>
+                )}
+
+                {/* Tabs for Stocks/Funds */}
+                <Box className="border-t border-slate-100">
+                    <Tabs
+                        value={tabValue}
+                        onChange={(_, v) => setTabValue(v)}
+                        className="px-5"
+                        TabIndicatorProps={{ className: 'bg-emerald-600' }}
+                    >
+                        <Tab
+                            icon={<ShowChartIcon className="text-sm" />}
+                            iconPosition="start"
+                            label={t('recommendations.tabs.stocks')}
+                            className="min-h-[48px] text-sm"
+                        />
+                        <Tab
+                            icon={<PieChartIcon className="text-sm" />}
+                            iconPosition="start"
+                            label={t('recommendations.tabs.funds')}
+                            className="min-h-[48px] text-sm"
+                        />
+                    </Tabs>
+                </Box>
+
+                {/* Table Content */}
+                <Box className="px-5 pb-5">
+                    {tabValue === 0 ? (
+                        <StockTableV2 stocks={stocks} isShortTerm={isShortTerm} onStockClick={handleStockClick} />
+                    ) : (
+                        <FundTableV2 funds={funds} isShortTerm={isShortTerm} onFundClick={handleFundClick} />
+                    )}
+                </Box>
+            </Collapse>
+
+            {/* V2 Stock Detail Modal */}
+            <StockDetailModalV2
+                open={stockModalOpen}
+                onClose={() => setStockModalOpen(false)}
+                stock={selectedStock}
+                isShortTerm={isShortTerm}
+            />
+
+            {/* V2 Fund Detail Modal */}
+            <FundDetailModalV2
+                open={fundModalOpen}
+                onClose={() => setFundModalOpen(false)}
+                fund={selectedFund}
+                isShortTerm={isShortTerm}
+            />
+        </Paper>
+    );
+};
+
+// --- V2 Stock Detail Modal Component ---
+
+interface StockDetailModalV2Props {
+    open: boolean;
+    onClose: () => void;
+    stock: RecommendationStockV2 | null;
+    isShortTerm: boolean;
+}
+
+const StockDetailModalV2 = ({ open, onClose, stock, isShortTerm }: StockDetailModalV2Props) => {
+    const { t } = useTranslation();
+    if (!stock) return null;
+
+    const factors = stock.factors || {};
+
+    return (
+        <Dialog
+            open={open}
+            onClose={onClose}
+            maxWidth="sm"
+            fullWidth
+            PaperProps={{ sx: { borderRadius: '12px', maxHeight: '85vh' } }}
+        >
+            <DialogTitle sx={{ p: 0 }}>
+                <Box sx={{ px: 2.5, py: 2, borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                            <Typography sx={{ fontWeight: 700, color: '#1e293b', fontSize: '1.1rem' }}>
+                                {stock.name}
+                            </Typography>
+                            <Typography sx={{ color: '#64748b', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                                {stock.code}
+                            </Typography>
+                            <Chip label="V2" size="small" sx={{ height: 16, fontSize: '0.6rem', bgcolor: '#d1fae5', color: '#047857' }} />
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+                            {stock.industry && (
+                                <Chip label={stock.industry} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f1f5f9', color: '#475569' }} />
+                            )}
+                            <Chip
+                                label={`${t('recommendations.table.score')}: ${stock.score.toFixed(0)}`}
+                                size="small"
+                                sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#dbeafe', color: '#1d4ed8', fontWeight: 600 }}
+                            />
+                        </Box>
+                    </Box>
+                    <IconButton onClick={onClose} size="small" sx={{ color: '#94a3b8' }}>
+                        <CloseIcon fontSize="small" />
+                    </IconButton>
+                </Box>
+            </DialogTitle>
+
+            <DialogContent sx={{ p: 0 }}>
+                <Box sx={{ px: 2.5, py: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {/* Explanation */}
+                    {stock.explanation && (
+                        <Box>
+                            <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', mb: 0.75, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <LightbulbIcon sx={{ fontSize: 14 }} /> {t('recommendations.detail.reason')}
+                            </Typography>
+                            <Typography sx={{ color: '#334155', fontSize: '0.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                {stock.explanation}
+                            </Typography>
+                        </Box>
+                    )}
+
+                    {/* Factor Data Grid */}
+                    <Box sx={{ bgcolor: '#f8fafc', borderRadius: '8px', p: 1.5 }}>
+                        <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#64748b', mb: 1 }}>
+                            {isShortTerm ? t('recommendations.v2.technical_factors') : t('recommendations.v2.fundamental_factors')}
+                        </Typography>
+                        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1.5 }}>
+                            {isShortTerm ? (
+                                <>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.consolidation')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.consolidation_score || 0) >= 70 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.consolidation_score?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.volume')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.volume_precursor?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.ma_conv')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.ma_convergence?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.inflow_5d')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.main_inflow_5d || 0) > 0 ? '#dc2626' : '#16a34a', fontSize: '0.85rem' }}>
+                                            {formatAmount(factors.main_inflow_5d)}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>RSI</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.rsi?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.accumulation')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: factors.is_accumulation ? '#16a34a' : '#64748b', fontSize: '0.85rem' }}>
+                                            {factors.is_accumulation ? t('common.yes') : t('common.no')}
+                                        </Typography>
+                                    </Box>
+                                </>
+                            ) : (
+                                <>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>ROE</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.roe || 0) >= 15 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.roe?.toFixed(1) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>PEG</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.peg_ratio || 0) > 0 && (factors.peg_ratio || 0) < 1 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.peg_ratio?.toFixed(2) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.quality')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.quality_score || 0) >= 70 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.quality_score?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.growth')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.growth_score?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.valuation')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.valuation_score?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.gross_margin')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.gross_margin?.toFixed(1) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                </>
+                            )}
+                        </Box>
+                    </Box>
+
+                    {/* Catalysts & Risks */}
+                    {((stock.catalysts && stock.catalysts.length > 0) || (stock.risks && stock.risks.length > 0)) && (
+                        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                            {stock.catalysts && stock.catalysts.length > 0 && (
+                                <Box>
+                                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#16a34a', mb: 0.75 }}>{t('recommendations.detail.catalysts')}</Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                        {stock.catalysts.map((catalyst, i) => (
+                                            <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#16a34a' } }}>
+                                                {catalyst}
+                                            </Typography>
+                                        ))}
+                                    </Box>
+                                </Box>
+                            )}
+                            {stock.risks && stock.risks.length > 0 && (
+                                <Box>
+                                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#dc2626', mb: 0.75 }}>{t('recommendations.detail.risk_factors')}</Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                        {stock.risks.map((risk, i) => (
+                                            <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#dc2626' } }}>
+                                                {risk}
+                                            </Typography>
+                                        ))}
+                                    </Box>
+                                </Box>
+                            )}
+                        </Box>
+                    )}
+                </Box>
+            </DialogContent>
+
+            <DialogActions sx={{ px: 2.5, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+                <Typography sx={{ color: '#94a3b8', fontSize: '0.75rem', flex: 1 }}>
+                    {t('recommendations.v2.strategy')}: {stock.strategy || (isShortTerm ? t('recommendations.v2.breakout') : t('recommendations.v2.quality'))}
+                </Typography>
+                <Button onClick={onClose} size="small" sx={{ color: '#64748b', fontSize: '0.8rem' }}>
+                    {t('recommendations.detail.close')}
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+// --- V2 Fund Detail Modal Component ---
+
+interface FundDetailModalV2Props {
+    open: boolean;
+    onClose: () => void;
+    fund: RecommendationFundV2 | null;
+    isShortTerm: boolean;
+}
+
+const FundDetailModalV2 = ({ open, onClose, fund, isShortTerm }: FundDetailModalV2Props) => {
+    const { t } = useTranslation();
+    if (!fund) return null;
+
+    const factors = fund.factors || {};
+
+    return (
+        <Dialog
+            open={open}
+            onClose={onClose}
+            maxWidth="sm"
+            fullWidth
+            PaperProps={{ sx: { borderRadius: '12px', maxHeight: '85vh' } }}
+        >
+            <DialogTitle sx={{ p: 0 }}>
+                <Box sx={{ px: 2.5, py: 2, borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                            <Typography sx={{ fontWeight: 700, color: '#1e293b', fontSize: '1.1rem' }}>
+                                {fund.name}
+                            </Typography>
+                            <Chip label="V2" size="small" sx={{ height: 16, fontSize: '0.6rem', bgcolor: '#d1fae5', color: '#047857' }} />
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
+                            <Typography sx={{ color: '#64748b', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                                {fund.code}
+                            </Typography>
+                            {fund.type && (
+                                <Chip label={fund.type} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f1f5f9', color: '#475569' }} />
+                            )}
+                            <Chip
+                                label={`${t('recommendations.table.score')}: ${fund.score.toFixed(0)}`}
+                                size="small"
+                                sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#e0e7ff', color: '#4338ca', fontWeight: 600 }}
+                            />
+                        </Box>
+                    </Box>
+                    <IconButton onClick={onClose} size="small" sx={{ color: '#94a3b8' }}>
+                        <CloseIcon fontSize="small" />
+                    </IconButton>
+                </Box>
+            </DialogTitle>
+
+            <DialogContent sx={{ p: 0 }}>
+                <Box sx={{ px: 2.5, py: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {/* Explanation */}
+                    {fund.explanation && (
+                        <Box>
+                            <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', mb: 0.75, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <LightbulbIcon sx={{ fontSize: 14 }} /> {t('recommendations.detail.reason')}
+                            </Typography>
+                            <Typography sx={{ color: '#334155', fontSize: '0.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                {fund.explanation}
+                            </Typography>
+                        </Box>
+                    )}
+
+                    {/* Factor Data Grid */}
+                    <Box sx={{ bgcolor: '#f8fafc', borderRadius: '8px', p: 1.5 }}>
+                        <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#64748b', mb: 1 }}>
+                            {isShortTerm ? t('recommendations.v2.momentum_factors') : t('recommendations.v2.risk_factors')}
+                        </Typography>
+                        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1.5 }}>
+                            {isShortTerm ? (
+                                <>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.sharpe_20d')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.sharpe_20d || 0) >= 1.5 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.sharpe_20d?.toFixed(2) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.table.return_1m')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.return_1m || 0) > 0 ? '#dc2626' : '#16a34a', fontSize: '0.85rem' }}>
+                                            {factors.return_1m?.toFixed(2) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.volatility')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.volatility_60d || 0) < 15 ? '#16a34a' : '#f97316', fontSize: '0.85rem' }}>
+                                            {factors.volatility_60d?.toFixed(1) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.table.return_1w')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.return_1w || 0) > 0 ? '#dc2626' : '#16a34a', fontSize: '0.85rem' }}>
+                                            {factors.return_1w?.toFixed(2) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.momentum_score')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.momentum_score?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                </>
+                            ) : (
+                                <>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.sharpe_1y')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.sharpe_1y || 0) >= 1.0 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.sharpe_1y?.toFixed(2) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.sortino')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.sortino_1y?.toFixed(2) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.max_dd')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: Math.abs(factors.max_drawdown_1y || 0) < 15 ? '#16a34a' : '#dc2626', fontSize: '0.85rem' }}>
+                                            {factors.max_drawdown_1y?.toFixed(1) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.tenure')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.manager_tenure_years || 0) >= 3 ? '#16a34a' : '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.manager_tenure_years?.toFixed(1) || '-'}{t('common.years')}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.v2.alpha_score')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: '#1e293b', fontSize: '0.85rem' }}>
+                                            {factors.alpha_score?.toFixed(0) || '-'}
+                                        </Typography>
+                                    </Box>
+                                    <Box>
+                                        <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>{t('recommendations.table.return_1y')}</Typography>
+                                        <Typography sx={{ fontWeight: 600, fontFamily: 'monospace', color: (factors.return_1y || 0) > 0 ? '#dc2626' : '#16a34a', fontSize: '0.85rem' }}>
+                                            {factors.return_1y?.toFixed(2) || '-'}%
+                                        </Typography>
+                                    </Box>
+                                </>
+                            )}
+                        </Box>
+                    </Box>
+
+                    {/* Catalysts & Risks */}
+                    {((fund.catalysts && fund.catalysts.length > 0) || (fund.risks && fund.risks.length > 0)) && (
+                        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                            {fund.catalysts && fund.catalysts.length > 0 && (
+                                <Box>
+                                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#16a34a', mb: 0.75 }}>{t('recommendations.detail.catalysts')}</Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                        {fund.catalysts.map((catalyst, i) => (
+                                            <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#16a34a' } }}>
+                                                {catalyst}
+                                            </Typography>
+                                        ))}
+                                    </Box>
+                                </Box>
+                            )}
+                            {fund.risks && fund.risks.length > 0 && (
+                                <Box>
+                                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#dc2626', mb: 0.75 }}>{t('recommendations.detail.risk_factors')}</Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                        {fund.risks.map((risk, i) => (
+                                            <Typography key={i} sx={{ color: '#475569', fontSize: '0.8rem', pl: 1.5, position: 'relative', '&::before': { content: '"•"', position: 'absolute', left: 0, color: '#dc2626' } }}>
+                                                {risk}
+                                            </Typography>
+                                        ))}
+                                    </Box>
+                                </Box>
+                            )}
+                        </Box>
+                    )}
+                </Box>
+            </DialogContent>
+
+            <DialogActions sx={{ px: 2.5, py: 1.5, borderTop: '1px solid #e2e8f0' }}>
+                <Typography sx={{ color: '#94a3b8', fontSize: '0.75rem', flex: 1 }}>
+                    {t('recommendations.v2.strategy')}: {fund.strategy || (isShortTerm ? t('recommendations.v2.momentum') : t('recommendations.v2.alpha'))}
+                </Typography>
+                <Button onClick={onClose} size="small" sx={{ color: '#64748b', fontSize: '0.8rem' }}>
+                    {t('recommendations.detail.close')}
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
 // --- Main Page Component ---
 
 export default function RecommendationsPage() {
     const { t } = useTranslation();
     const [data, setData] = useState<RecommendationResult | null>(null);
+    const [dataV2, setDataV2] = useState<RecommendationResultV2 | null>(null);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
     const [generatingProgress, setGeneratingProgress] = useState<string>('');
     const [mode, setMode] = useState<'all' | 'short' | 'long'>('all');
     const [preferencesOpen, setPreferencesOpen] = useState(false);
     const [hasPreferences, setHasPreferences] = useState(false);
+    const [useV2Engine, setUseV2Engine] = useState(false);
+    const [factorStatus, setFactorStatus] = useState<FactorStatus | null>(null);
     const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
         open: false,
         message: '',
@@ -1247,12 +2119,37 @@ export default function RecommendationsPage() {
         }
     };
 
+    const checkFactorStatus = async () => {
+        try {
+            const status = await getFactorStatusV2();
+            setFactorStatus(status);
+        } catch (error) {
+            console.error('Failed to check factor status', error);
+        }
+    };
+
     const handleGenerate = async (forceRefresh: boolean = false) => {
         try {
             setGenerating(true);
             setGeneratingProgress(t('recommendations.messages.generate_started'));
             setSnackbar({ open: true, message: t('recommendations.messages.generate_started'), severity: 'success' });
 
+            // Use V2 engine if enabled
+            if (useV2Engine) {
+                const result = await generateRecommendationsV2({
+                    mode,
+                    stock_limit: 20,
+                    fund_limit: 20,
+                    use_llm: true
+                });
+                setDataV2(result);
+                setSnackbar({ open: true, message: t('recommendations.messages.generate_success'), severity: 'success' });
+                setGenerating(false);
+                setGeneratingProgress('');
+                return;
+            }
+
+            // V1 engine
             const response = await generateRecommendations({ mode, force_refresh: forceRefresh });
 
             // If cached result returned immediately
@@ -1289,16 +2186,31 @@ export default function RecommendationsPage() {
     useEffect(() => {
         loadData();
         checkPreferences();
+        checkFactorStatus();
     }, []);
 
-    // Extract data based on mode
+    // Extract data based on mode and engine version
     const shortTermData = data?.short_term;
     const longTermData = data?.long_term;
 
+    // V1 data
     const shortStocks = shortTermData?.short_term_stocks || shortTermData?.stocks || [];
     const shortFunds = shortTermData?.short_term_funds || shortTermData?.funds || [];
     const longStocks = longTermData?.long_term_stocks || longTermData?.stocks || [];
     const longFunds = longTermData?.long_term_funds || longTermData?.funds || [];
+
+    // V2 data
+    const shortStocksV2 = dataV2?.short_term?.stocks || [];
+    const shortFundsV2 = dataV2?.short_term?.funds || [];
+    const longStocksV2 = dataV2?.long_term?.stocks || [];
+    const longFundsV2 = dataV2?.long_term?.funds || [];
+
+    // Check if we have any data to display
+    const hasV2Data = dataV2 && (shortStocksV2.length > 0 || longStocksV2.length > 0);
+    const hasV1Data = data && (shortStocks.length > 0 || longStocks.length > 0);
+
+    // Determine which data to display based on engine and data availability
+    const displayV2 = useV2Engine && hasV2Data;
 
     return (
         <Box className="flex flex-col gap-6 w-full h-full pb-10">
@@ -1319,6 +2231,35 @@ export default function RecommendationsPage() {
                 </Box>
 
                 <Box className="flex items-center gap-3">
+                    {/* V2 Engine Toggle */}
+                    <Tooltip title={
+                        useV2Engine
+                            ? t('recommendations.v2.engine_enabled_tip')
+                            : t('recommendations.v2.engine_disabled_tip')
+                    }>
+                        <Box
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${
+                                useV2Engine
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                    : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                            }`}
+                            onClick={() => setUseV2Engine(!useV2Engine)}
+                        >
+                            <ScienceIcon fontSize="small" />
+                            <Typography variant="caption" className="font-semibold">
+                                {useV2Engine ? 'V2' : 'V1'}
+                            </Typography>
+                            {factorStatus?.stock_factors?.count && factorStatus.stock_factors.count > 0 && useV2Engine && (
+                                <Badge
+                                    badgeContent={factorStatus.stock_factors.count}
+                                    color="success"
+                                    max={9999}
+                                    sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 14, minWidth: 14 } }}
+                                />
+                            )}
+                        </Box>
+                    </Tooltip>
+
                     {/* Preferences Button */}
                     <Tooltip title={hasPreferences ? t('recommendations.preferences.tooltip_configured') : t('recommendations.preferences.tooltip_not_configured')}>
                         <IconButton
@@ -1385,13 +2326,34 @@ export default function RecommendationsPage() {
             </Box>
 
             {/* Last Updated Info */}
-            {data?.generated_at && (
+            {(data?.generated_at || dataV2?.generated_at) && (
                 <Box className="flex items-center gap-2 text-slate-500 flex-wrap">
                     <AccessTimeIcon className="text-sm" />
                     <Typography variant="caption">
-                        {t('recommendations.last_updated')}: {new Date(data.generated_at).toLocaleString()}
+                        {t('recommendations.last_updated')}: {new Date((displayV2 ? dataV2?.generated_at : data?.generated_at) || '').toLocaleString()}
                     </Typography>
-                    {data.metadata && (
+                    {displayV2 && dataV2?.trade_date && (
+                        <Chip
+                            label={`${t('recommendations.v2.trade_date')}: ${dataV2.trade_date}`}
+                            size="small"
+                            className="h-5 text-[10px] bg-emerald-50 text-emerald-700 ml-2"
+                        />
+                    )}
+                    {displayV2 && dataV2?.metadata && (
+                        <Box className="flex gap-3 ml-4">
+                            <Chip
+                                label={`${t('recommendations.v2.factor_time')}: ${dataV2.metadata.factor_computation_time?.toFixed(1)}s`}
+                                size="small"
+                                className="h-5 text-[10px] bg-slate-100"
+                            />
+                            <Chip
+                                label={`${t('recommendations.metadata.total_time')}: ${dataV2.metadata.total_time?.toFixed(1)}s`}
+                                size="small"
+                                className="h-5 text-[10px] bg-emerald-100 text-emerald-700"
+                            />
+                        </Box>
+                    )}
+                    {!displayV2 && data?.metadata && (
                         <Box className="flex gap-3 ml-4">
                             <Chip
                                 label={`${t('recommendations.metadata.screening_time')}: ${data.metadata.screening_time?.toFixed(1)}s`}
@@ -1410,7 +2372,7 @@ export default function RecommendationsPage() {
                             />
                         </Box>
                     )}
-                    {hasPreferences && (
+                    {hasPreferences && !displayV2 && (
                         <Chip
                             icon={<TuneIcon className="text-[12px]" />}
                             label={data?.personalized ? t('recommendations.preferences.personalized') : t('recommendations.preferences.preferences_set')}
@@ -1420,6 +2382,14 @@ export default function RecommendationsPage() {
                                     ? 'bg-purple-100 text-purple-700'
                                     : 'bg-slate-100 text-slate-600'
                             }`}
+                        />
+                    )}
+                    {displayV2 && (
+                        <Chip
+                            icon={<ScienceIcon sx={{ fontSize: 12 }} />}
+                            label={t('recommendations.v2.quant_engine')}
+                            size="small"
+                            className="h-5 text-[10px] ml-2 bg-emerald-100 text-emerald-700"
                         />
                     )}
                 </Box>
@@ -1433,7 +2403,7 @@ export default function RecommendationsPage() {
             )}
 
             {/* No Data State */}
-            {!loading && !data && (
+            {!loading && !data && !dataV2 && (
                 <Paper elevation={0} className="border border-slate-200 rounded-xl bg-white p-12 text-center">
                     <AutoAwesomeIcon className="text-6xl text-slate-300 mb-4" />
                     <Typography variant="h6" className="text-slate-600 mb-2">
@@ -1454,8 +2424,41 @@ export default function RecommendationsPage() {
                 </Paper>
             )}
 
-            {/* Recommendations Content */}
-            {!loading && data && (
+            {/* V2 Recommendations Content */}
+            {!loading && displayV2 && dataV2 && (
+                <Box className="flex flex-col gap-6">
+                    {/* V2 Short-Term Section */}
+                    {(mode === 'all' || mode === 'short') && dataV2.short_term && (
+                        <RecommendationSectionV2
+                            title={t('recommendations.short_term.title')}
+                            subtitle={t('recommendations.v2.short_term_subtitle')}
+                            icon={<TrendingUpIcon className="text-blue-600" />}
+                            stocks={shortStocksV2}
+                            funds={shortFundsV2}
+                            marketView={dataV2.short_term.market_view}
+                            isShortTerm={true}
+                            defaultExpanded={true}
+                        />
+                    )}
+
+                    {/* V2 Long-Term Section */}
+                    {(mode === 'all' || mode === 'long') && dataV2.long_term && (
+                        <RecommendationSectionV2
+                            title={t('recommendations.long_term.title')}
+                            subtitle={t('recommendations.v2.long_term_subtitle')}
+                            icon={<CalendarMonthIcon className="text-purple-600" />}
+                            stocks={longStocksV2}
+                            funds={longFundsV2}
+                            marketView={dataV2.long_term.macro_view}
+                            isShortTerm={false}
+                            defaultExpanded={mode !== 'all'}
+                        />
+                    )}
+                </Box>
+            )}
+
+            {/* V1 Recommendations Content */}
+            {!loading && !displayV2 && data && (
                 <Box className="flex flex-col gap-6">
                     {/* Short-Term Section */}
                     {(mode === 'all' || mode === 'short') && shortTermData && (

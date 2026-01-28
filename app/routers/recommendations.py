@@ -430,3 +430,328 @@ async def get_recommendation_history(
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# V2 API Endpoints - Quantitative Factor-Based Recommendations
+# =============================================================================
+
+class RecommendationRequestV2(BaseModel):
+    mode: str = "all"  # "short", "long", "all"
+    stock_limit: int = 20
+    fund_limit: int = 20
+    use_explanations: bool = True
+
+
+@router.post("/v2/generate")
+async def generate_recommendations_v2(
+    request: RecommendationRequestV2 = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate recommendations using v2 quantitative factor-based engine.
+
+    V2 improvements:
+    - Uses pre-computed factors for faster response
+    - Quantitative selection (not LLM)
+    - LLM only for explanations
+    - Better factor-based scoring
+    """
+    mode = request.mode if request else "all"
+    stock_limit = request.stock_limit if request else 20
+    fund_limit = request.fund_limit if request else 20
+    use_explanations = request.use_explanations if request else True
+
+    if mode not in ["short", "long", "all"]:
+        raise HTTPException(status_code=400, detail="Invalid mode. Use 'short', 'long', or 'all'.")
+
+    try:
+        from src.analysis.recommendation.engine_v2 import RecommendationEngineV2
+        from src.storage.db import get_user_preferences
+
+        # Load user preferences
+        user_preferences = None
+        try:
+            prefs_data = get_user_preferences(current_user.id)
+            if prefs_data and prefs_data.get('preferences'):
+                user_preferences = prefs_data.get('preferences')
+        except:
+            pass
+
+        # Generate using v2 engine
+        engine = RecommendationEngineV2(use_llm_explanations=use_explanations)
+        results = engine.generate_recommendations(
+            mode=mode,
+            stock_limit=stock_limit,
+            fund_limit=fund_limit,
+            user_preferences=user_preferences
+        )
+
+        # Sanitize results
+        results = sanitize_for_json(results)
+
+        return {
+            "status": "completed",
+            "result": results
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/v2/stocks/short")
+async def get_v2_short_term_stocks(
+    limit: int = 20,
+    min_score: float = 60,
+    current_user: User = Depends(get_current_user)
+):
+    """Get short-term stock recommendations from v2 engine (real-time computation)."""
+    try:
+        from src.analysis.recommendation.stock_engine import StockRecommendationEngine
+        from src.data_sources.tushare_client import get_latest_trade_date
+
+        engine = StockRecommendationEngine()
+        trade_date = get_latest_trade_date()
+
+        recommendations = engine.get_recommendations(
+            strategy='short_term',
+            top_n=limit,
+            trade_date=trade_date,
+            min_score=min_score
+        )
+
+        return {
+            "recommendations": sanitize_for_json(recommendations),
+            "trade_date": trade_date,
+            "engine_version": "v2"
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"recommendations": [], "error": str(e)}
+
+
+@router.get("/v2/stocks/long")
+async def get_v2_long_term_stocks(
+    limit: int = 20,
+    min_score: float = 60,
+    current_user: User = Depends(get_current_user)
+):
+    """Get long-term stock recommendations from v2 engine (real-time computation)."""
+    try:
+        from src.analysis.recommendation.stock_engine import StockRecommendationEngine
+        from src.data_sources.tushare_client import get_latest_trade_date
+
+        engine = StockRecommendationEngine()
+        trade_date = get_latest_trade_date()
+
+        recommendations = engine.get_recommendations(
+            strategy='long_term',
+            top_n=limit,
+            trade_date=trade_date,
+            min_score=min_score
+        )
+
+        return {
+            "recommendations": sanitize_for_json(recommendations),
+            "trade_date": trade_date,
+            "engine_version": "v2"
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"recommendations": [], "error": str(e)}
+
+
+@router.get("/v2/funds/short")
+async def get_v2_short_term_funds(
+    limit: int = 20,
+    min_score: float = 55,
+    current_user: User = Depends(get_current_user)
+):
+    """Get short-term fund recommendations from v2 engine."""
+    try:
+        from src.analysis.recommendation.fund_engine import FundRecommendationEngine
+        from src.data_sources.tushare_client import get_latest_trade_date
+
+        engine = FundRecommendationEngine()
+        trade_date = get_latest_trade_date()
+
+        recommendations = engine.get_recommendations(
+            strategy='short_term',
+            top_n=limit,
+            trade_date=trade_date,
+            min_score=min_score
+        )
+
+        return {
+            "recommendations": sanitize_for_json(recommendations),
+            "trade_date": trade_date,
+            "engine_version": "v2"
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"recommendations": [], "error": str(e)}
+
+
+@router.get("/v2/funds/long")
+async def get_v2_long_term_funds(
+    limit: int = 20,
+    min_score: float = 55,
+    current_user: User = Depends(get_current_user)
+):
+    """Get long-term fund recommendations from v2 engine."""
+    try:
+        from src.analysis.recommendation.fund_engine import FundRecommendationEngine
+        from src.data_sources.tushare_client import get_latest_trade_date
+
+        engine = FundRecommendationEngine()
+        trade_date = get_latest_trade_date()
+
+        recommendations = engine.get_recommendations(
+            strategy='long_term',
+            top_n=limit,
+            trade_date=trade_date,
+            min_score=min_score
+        )
+
+        return {
+            "recommendations": sanitize_for_json(recommendations),
+            "trade_date": trade_date,
+            "engine_version": "v2"
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"recommendations": [], "error": str(e)}
+
+
+@router.get("/v2/analyze/stock/{code}")
+async def analyze_stock_v2(
+    code: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get comprehensive analysis for a single stock using v2 engine."""
+    try:
+        from src.analysis.recommendation.stock_engine.engine import analyze_stock
+
+        result = analyze_stock(code)
+        return sanitize_for_json(result)
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/v2/analyze/fund/{code}")
+async def analyze_fund_v2(
+    code: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get comprehensive analysis for a single fund using v2 engine."""
+    try:
+        from src.analysis.recommendation.fund_engine.engine import analyze_fund
+
+        result = analyze_fund(code)
+        return sanitize_for_json(result)
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/v2/performance")
+async def get_recommendation_performance(
+    rec_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get recommendation performance statistics.
+
+    Shows how past recommendations performed (hit rate, average return, etc.)
+    """
+    try:
+        from src.storage.db import get_recommendation_performance_stats
+
+        stats = get_recommendation_performance_stats(rec_type, start_date, end_date)
+
+        return {
+            "stats": stats,
+            "filters": {
+                "rec_type": rec_type,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/v2/compute-factors")
+async def trigger_factor_computation(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Manually trigger factor computation for all stocks.
+
+    This is normally run automatically at 6:00 AM.
+    Admin only endpoint.
+    """
+    # TODO: Add admin check
+
+    try:
+        from src.analysis.recommendation.factor_store.daily_computer import daily_computer
+        from src.data_sources.tushare_client import get_latest_trade_date
+
+        if daily_computer.is_running:
+            return {
+                "status": "already_running",
+                "progress": daily_computer.progress
+            }
+
+        trade_date = get_latest_trade_date()
+
+        # Start computation in background
+        import threading
+        thread = threading.Thread(
+            target=daily_computer.compute_all_stock_factors,
+            args=(trade_date,)
+        )
+        thread.start()
+
+        return {
+            "status": "started",
+            "trade_date": trade_date,
+            "message": "Factor computation started in background"
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/v2/factor-status")
+async def get_factor_computation_status(
+    current_user: User = Depends(get_current_user)
+):
+    """Get the status of factor computation."""
+    try:
+        from src.analysis.recommendation.factor_store.daily_computer import daily_computer
+        from src.analysis.recommendation.factor_store.cache import factor_cache
+
+        return {
+            "is_running": daily_computer.is_running,
+            "progress": daily_computer.progress,
+            "cache_stats": factor_cache.get_stats()
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

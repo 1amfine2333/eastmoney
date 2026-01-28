@@ -365,6 +365,135 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_alerts_user ON portfolio_alerts(user_id)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_alerts_unread ON portfolio_alerts(user_id, is_read)')
 
+    # 21. Create Stock Factors Daily Cache Table (Recommendation System v2)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS stock_factors_daily (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            -- Technical factors
+            consolidation_score REAL,
+            volume_precursor REAL,
+            ma_convergence REAL,
+            rsi REAL,
+            macd_signal REAL,
+            bollinger_position REAL,
+            -- Fundamental factors
+            roe REAL,
+            roe_yoy REAL,
+            gross_margin REAL,
+            gross_margin_stability REAL,
+            ocf_to_profit REAL,
+            debt_ratio REAL,
+            revenue_growth_yoy REAL,
+            profit_growth_yoy REAL,
+            revenue_cagr_3y REAL,
+            profit_cagr_3y REAL,
+            peg_ratio REAL,
+            pe_percentile REAL,
+            pb_percentile REAL,
+            -- Sentiment/Money flow factors
+            main_inflow_5d REAL,
+            main_inflow_trend REAL,
+            north_inflow_5d REAL,
+            retail_outflow_ratio REAL,
+            -- Composite scores
+            short_term_score REAL,
+            long_term_score REAL,
+            -- Metadata
+            computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(code, trade_date)
+        )
+    ''')
+
+    # Create indexes for stock_factors_daily
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_factors_date ON stock_factors_daily(trade_date)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_factors_code ON stock_factors_daily(code)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_factors_short_score ON stock_factors_daily(trade_date, short_term_score DESC)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_factors_long_score ON stock_factors_daily(trade_date, long_term_score DESC)')
+
+    # 22. Create Fund Factors Daily Cache Table (Recommendation System v2)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS fund_factors_daily (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            -- Performance factors
+            return_1w REAL,
+            return_1m REAL,
+            return_3m REAL,
+            return_6m REAL,
+            return_1y REAL,
+            return_rank_1w REAL,
+            return_rank_1m REAL,
+            -- Risk factors
+            volatility_20d REAL,
+            volatility_60d REAL,
+            sharpe_20d REAL,
+            sharpe_1y REAL,
+            sortino_1y REAL,
+            calmar_1y REAL,
+            max_drawdown_1y REAL,
+            avg_recovery_days REAL,
+            -- Manager factors
+            manager_tenure_years REAL,
+            manager_alpha_bull REAL,
+            manager_alpha_bear REAL,
+            style_consistency REAL,
+            fund_size REAL,
+            -- Holdings factors
+            holdings_avg_roe REAL,
+            holdings_diversification REAL,
+            turnover_rate REAL,
+            -- Composite scores
+            short_term_score REAL,
+            long_term_score REAL,
+            -- Metadata
+            computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(code, trade_date)
+        )
+    ''')
+
+    # Create indexes for fund_factors_daily
+    c.execute('CREATE INDEX IF NOT EXISTS idx_fund_factors_date ON fund_factors_daily(trade_date)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_fund_factors_code ON fund_factors_daily(code)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_fund_factors_short_score ON fund_factors_daily(trade_date, short_term_score DESC)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_fund_factors_long_score ON fund_factors_daily(trade_date, long_term_score DESC)')
+
+    # 23. Create Recommendation Performance Table (track recommendation accuracy)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS recommendation_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            rec_type TEXT NOT NULL,
+            rec_date TEXT NOT NULL,
+            rec_price REAL,
+            rec_score REAL,
+            target_return_pct REAL,
+            stop_loss_pct REAL,
+            -- Performance tracking
+            check_date_7d TEXT,
+            price_7d REAL,
+            return_7d REAL,
+            check_date_30d TEXT,
+            price_30d REAL,
+            return_30d REAL,
+            -- Outcome
+            hit_target INTEGER DEFAULT 0,
+            hit_stop INTEGER DEFAULT 0,
+            final_return REAL,
+            evaluation_status TEXT DEFAULT 'pending',
+            -- Metadata
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(code, rec_type, rec_date)
+        )
+    ''')
+
+    # Create indexes for recommendation_performance
+    c.execute('CREATE INDEX IF NOT EXISTS idx_rec_perf_date ON recommendation_performance(rec_date)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_rec_perf_type ON recommendation_performance(rec_type)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_rec_perf_status ON recommendation_performance(evaluation_status)')
 
     # 3. Migration: Add user_id to funds if not exists
     try:
@@ -2781,3 +2910,314 @@ def migrate_fund_positions_to_positions(user_id: int, portfolio_id: int) -> int:
     conn.commit()
     conn.close()
     return migrated
+
+
+# =============================================================================
+# Stock Factors Daily (股票因子缓存 - 推荐系统v2)
+# =============================================================================
+
+def upsert_stock_factors(factors: Dict) -> bool:
+    """Insert or update stock factors for a given code and date."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    columns = [
+        'code', 'trade_date', 'consolidation_score', 'volume_precursor', 'ma_convergence',
+        'rsi', 'macd_signal', 'bollinger_position', 'roe', 'roe_yoy', 'gross_margin',
+        'gross_margin_stability', 'ocf_to_profit', 'debt_ratio', 'revenue_growth_yoy',
+        'profit_growth_yoy', 'revenue_cagr_3y', 'profit_cagr_3y', 'peg_ratio',
+        'pe_percentile', 'pb_percentile', 'main_inflow_5d', 'main_inflow_trend',
+        'north_inflow_5d', 'retail_outflow_ratio', 'short_term_score', 'long_term_score'
+    ]
+
+    placeholders = ', '.join(['?' for _ in columns])
+    update_clause = ', '.join([f'{col} = excluded.{col}' for col in columns[2:]])
+
+    values = [factors.get(col) for col in columns]
+
+    c.execute(f'''
+        INSERT INTO stock_factors_daily ({', '.join(columns)}, computed_at)
+        VALUES ({placeholders}, CURRENT_TIMESTAMP)
+        ON CONFLICT(code, trade_date) DO UPDATE SET
+        {update_clause}, computed_at = CURRENT_TIMESTAMP
+    ''', values)
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_stock_factors(code: str, trade_date: str) -> Optional[Dict]:
+    """Get stock factors for a specific code and date."""
+    conn = get_db_connection()
+    result = conn.execute(
+        'SELECT * FROM stock_factors_daily WHERE code = ? AND trade_date = ?',
+        (code, trade_date)
+    ).fetchone()
+    conn.close()
+    return dict(result) if result else None
+
+
+def get_stock_factors_batch(codes: List[str], trade_date: str) -> List[Dict]:
+    """Get stock factors for multiple codes on a given date."""
+    conn = get_db_connection()
+    placeholders = ', '.join(['?' for _ in codes])
+    results = conn.execute(
+        f'SELECT * FROM stock_factors_daily WHERE code IN ({placeholders}) AND trade_date = ?',
+        (*codes, trade_date)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in results]
+
+
+def get_top_stocks_by_score(
+    trade_date: str,
+    score_type: str = 'short_term',
+    limit: int = 20,
+    min_score: float = 0
+) -> List[Dict]:
+    """Get top-ranked stocks by score for a given date."""
+    score_col = 'short_term_score' if score_type == 'short_term' else 'long_term_score'
+    conn = get_db_connection()
+    results = conn.execute(f'''
+        SELECT * FROM stock_factors_daily
+        WHERE trade_date = ? AND {score_col} >= ?
+        ORDER BY {score_col} DESC
+        LIMIT ?
+    ''', (trade_date, min_score, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in results]
+
+
+def delete_old_stock_factors(days_to_keep: int = 30) -> int:
+    """Delete stock factors older than specified days."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    result = c.execute('''
+        DELETE FROM stock_factors_daily
+        WHERE trade_date < date('now', ?)
+    ''', (f'-{days_to_keep} days',))
+    deleted = result.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# =============================================================================
+# Fund Factors Daily (基金因子缓存 - 推荐系统v2)
+# =============================================================================
+
+def upsert_fund_factors(factors: Dict) -> bool:
+    """Insert or update fund factors for a given code and date."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    columns = [
+        'code', 'trade_date', 'return_1w', 'return_1m', 'return_3m', 'return_6m',
+        'return_1y', 'return_rank_1w', 'return_rank_1m', 'volatility_20d',
+        'volatility_60d', 'sharpe_20d', 'sharpe_1y', 'sortino_1y', 'calmar_1y',
+        'max_drawdown_1y', 'avg_recovery_days', 'manager_tenure_years',
+        'manager_alpha_bull', 'manager_alpha_bear', 'style_consistency', 'fund_size',
+        'holdings_avg_roe', 'holdings_diversification', 'turnover_rate',
+        'short_term_score', 'long_term_score'
+    ]
+
+    placeholders = ', '.join(['?' for _ in columns])
+    update_clause = ', '.join([f'{col} = excluded.{col}' for col in columns[2:]])
+
+    values = [factors.get(col) for col in columns]
+
+    c.execute(f'''
+        INSERT INTO fund_factors_daily ({', '.join(columns)}, computed_at)
+        VALUES ({placeholders}, CURRENT_TIMESTAMP)
+        ON CONFLICT(code, trade_date) DO UPDATE SET
+        {update_clause}, computed_at = CURRENT_TIMESTAMP
+    ''', values)
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_fund_factors(code: str, trade_date: str) -> Optional[Dict]:
+    """Get fund factors for a specific code and date."""
+    conn = get_db_connection()
+    result = conn.execute(
+        'SELECT * FROM fund_factors_daily WHERE code = ? AND trade_date = ?',
+        (code, trade_date)
+    ).fetchone()
+    conn.close()
+    return dict(result) if result else None
+
+
+def get_fund_factors_batch(codes: List[str], trade_date: str) -> List[Dict]:
+    """Get fund factors for multiple codes on a given date."""
+    conn = get_db_connection()
+    placeholders = ', '.join(['?' for _ in codes])
+    results = conn.execute(
+        f'SELECT * FROM fund_factors_daily WHERE code IN ({placeholders}) AND trade_date = ?',
+        (*codes, trade_date)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in results]
+
+
+def get_top_funds_by_score(
+    trade_date: str,
+    score_type: str = 'short_term',
+    limit: int = 20,
+    min_score: float = 0
+) -> List[Dict]:
+    """Get top-ranked funds by score for a given date."""
+    score_col = 'short_term_score' if score_type == 'short_term' else 'long_term_score'
+    conn = get_db_connection()
+    results = conn.execute(f'''
+        SELECT * FROM fund_factors_daily
+        WHERE trade_date = ? AND {score_col} >= ?
+        ORDER BY {score_col} DESC
+        LIMIT ?
+    ''', (trade_date, min_score, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in results]
+
+
+def delete_old_fund_factors(days_to_keep: int = 30) -> int:
+    """Delete fund factors older than specified days."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    result = c.execute('''
+        DELETE FROM fund_factors_daily
+        WHERE trade_date < date('now', ?)
+    ''', (f'-{days_to_keep} days',))
+    deleted = result.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# =============================================================================
+# Recommendation Performance (推荐绩效追踪 - 推荐系统v2)
+# =============================================================================
+
+def insert_recommendation_record(record: Dict) -> int:
+    """Insert a new recommendation performance tracking record."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    c.execute('''
+        INSERT INTO recommendation_performance (
+            code, rec_type, rec_date, rec_price, rec_score,
+            target_return_pct, stop_loss_pct, evaluation_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+    ''', (
+        record['code'],
+        record['rec_type'],
+        record['rec_date'],
+        record.get('rec_price'),
+        record.get('rec_score'),
+        record.get('target_return_pct', 5.0),
+        record.get('stop_loss_pct', -3.0)
+    ))
+
+    record_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return record_id
+
+
+def update_recommendation_performance(record_id: int, updates: Dict) -> bool:
+    """Update recommendation performance with price checks."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    set_clauses = []
+    values = []
+    for key, val in updates.items():
+        set_clauses.append(f'{key} = ?')
+        values.append(val)
+
+    set_clauses.append('updated_at = CURRENT_TIMESTAMP')
+    values.append(record_id)
+
+    c.execute(f'''
+        UPDATE recommendation_performance
+        SET {', '.join(set_clauses)}
+        WHERE id = ?
+    ''', values)
+
+    conn.commit()
+    success = c.rowcount > 0
+    conn.close()
+    return success
+
+
+def get_pending_performance_records(check_type: str = '7d') -> List[Dict]:
+    """Get pending recommendation records that need price checking."""
+    conn = get_db_connection()
+
+    if check_type == '7d':
+        condition = "check_date_7d IS NULL AND rec_date <= date('now', '-7 days')"
+    else:
+        condition = "check_date_30d IS NULL AND rec_date <= date('now', '-30 days')"
+
+    results = conn.execute(f'''
+        SELECT * FROM recommendation_performance
+        WHERE evaluation_status = 'pending' AND {condition}
+    ''').fetchall()
+
+    conn.close()
+    return [dict(r) for r in results]
+
+
+def get_recommendation_performance_stats(
+    rec_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Dict:
+    """Get aggregated performance statistics for recommendations."""
+    conn = get_db_connection()
+
+    conditions = ["evaluation_status != 'pending'"]
+    params = []
+
+    if rec_type:
+        conditions.append('rec_type = ?')
+        params.append(rec_type)
+    if start_date:
+        conditions.append('rec_date >= ?')
+        params.append(start_date)
+    if end_date:
+        conditions.append('rec_date <= ?')
+        params.append(end_date)
+
+    where_clause = ' AND '.join(conditions)
+
+    stats = conn.execute(f'''
+        SELECT
+            rec_type,
+            COUNT(*) as total_recs,
+            SUM(CASE WHEN hit_target = 1 THEN 1 ELSE 0 END) as hit_target_count,
+            SUM(CASE WHEN hit_stop = 1 THEN 1 ELSE 0 END) as hit_stop_count,
+            AVG(return_7d) as avg_return_7d,
+            AVG(return_30d) as avg_return_30d,
+            AVG(final_return) as avg_final_return
+        FROM recommendation_performance
+        WHERE {where_clause}
+        GROUP BY rec_type
+    ''', params).fetchall()
+
+    conn.close()
+
+    return {
+        row['rec_type']: {
+            'total': row['total_recs'],
+            'hit_target_count': row['hit_target_count'],
+            'hit_stop_count': row['hit_stop_count'],
+            'hit_rate': row['hit_target_count'] / row['total_recs'] if row['total_recs'] > 0 else 0,
+            'avg_return_7d': row['avg_return_7d'],
+            'avg_return_30d': row['avg_return_30d'],
+            'avg_final_return': row['avg_final_return']
+        }
+        for row in stats
+    }
+
