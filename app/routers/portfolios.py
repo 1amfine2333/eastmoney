@@ -1599,25 +1599,34 @@ async def get_returns_summary(
             enriched = await enrich_positions_with_prices(positions)
             total_value = sum(float(p.get('current_value') or 0) for p in enriched)
             total_cost = sum(float(p.get('total_cost') or 0) for p in enriched)
-            total_pnl = total_value - total_cost
-            total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+            
+            # Check if any positions failed to get prices
+            has_incomplete_data = any(p.get('current_price') is None for p in enriched)
+            
+            if total_cost > 0 and not has_incomplete_data:
+                total_pnl = total_value - total_cost
+                total_pnl_pct = (total_pnl / total_cost * 100)
+            else:
+                total_pnl = None
+                total_pnl_pct = None
 
             return {
-                "total_pnl": round(total_pnl, 2),
-                "total_pnl_pct": round(total_pnl_pct, 2),
-                "annualized_return": 0,
-                "today_pnl": 0,
-                "today_pnl_pct": 0,
-                "week_pnl": 0,
-                "week_pnl_pct": 0,
-                "month_pnl": 0,
-                "month_pnl_pct": 0,
-                "max_drawdown": 0,
-                "max_drawdown_pct": 0,
+                "total_pnl": round(total_pnl, 2) if total_pnl is not None else None,
+                "total_pnl_pct": round(total_pnl_pct, 2) if total_pnl_pct is not None else None,
+                "annualized_return": None,
+                "today_pnl": None,
+                "today_pnl_pct": None,
+                "week_pnl": None,
+                "week_pnl_pct": None,
+                "month_pnl": None,
+                "month_pnl_pct": None,
+                "max_drawdown": None,
+                "max_drawdown_pct": None,
                 "profitable_days": 0,
                 "total_trading_days": 0,
                 "best_day": None,
                 "worst_day": None,
+                "data_incomplete": has_incomplete_data,
             }
 
         # Sort snapshots by date
@@ -1662,12 +1671,22 @@ async def get_returns_summary(
         else:
             annualized_return = 0
 
-        # Today's P&L
+        # Today's P&L - Check if snapshot is complete before using the value
         today_dt = datetime.now()
         today = today_dt.strftime('%Y-%m-%d')
         today_data = next((r for r in daily_returns if normalize_date_str(r['date']) == today), None)
-        today_pnl = today_data['pnl'] if today_data else 0
-        today_pnl_pct = today_data['pnl_pct'] if today_data else 0
+        
+        # Also check if today's snapshot is complete
+        today_snapshot = next((s for s in snapshots if normalize_date_str(s['snapshot_date']) == today), None)
+        today_snapshot_complete = today_snapshot.get('is_complete', True) if today_snapshot else True
+        
+        # Return None if data is incomplete or unavailable
+        if today_data and today_snapshot_complete:
+            today_pnl = today_data['pnl']
+            today_pnl_pct = today_data['pnl_pct']
+        else:
+            today_pnl = None
+            today_pnl_pct = None
 
         # Week P&L - Calculate from Monday of current week to today
         # weekday() returns 0 for Monday, 6 for Sunday
@@ -1734,8 +1753,8 @@ async def get_returns_summary(
             "total_pnl": round(total_pnl, 2),
             "total_pnl_pct": round(total_pnl_pct, 2),
             "annualized_return": round(annualized_return, 2),
-            "today_pnl": round(today_pnl, 2),
-            "today_pnl_pct": round(today_pnl_pct, 2),
+            "today_pnl": round(today_pnl, 2) if today_pnl is not None else None,
+            "today_pnl_pct": round(today_pnl_pct, 2) if today_pnl_pct is not None else None,
             "week_pnl": round(week_pnl, 2),
             "week_pnl_pct": round(week_pnl_pct, 2),
             "month_pnl": round(month_pnl, 2),

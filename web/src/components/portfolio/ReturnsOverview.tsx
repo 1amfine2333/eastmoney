@@ -12,16 +12,12 @@ import {
 import Grid from '@mui/material/Grid';
 import {
   TrendingUp,
-  TrendingDown,
   CalendarToday,
   ShowChart,
   Speed,
-  EmojiEvents,
-  Warning,
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import type { ReturnsSummary } from '../../api';
-import AnimatedNumber from './AnimatedNumber';
 
 interface ReturnsOverviewProps {
   data: ReturnsSummary | null;
@@ -30,7 +26,7 @@ interface ReturnsOverviewProps {
 
 interface MetricCardProps {
   label: string;
-  value: number;
+  value: number | null | undefined;
   suffix?: string;
   prefix?: string;
   showSign?: boolean;
@@ -39,6 +35,11 @@ interface MetricCardProps {
   secondary?: string;
   trend?: 'up' | 'down' | 'neutral';
 }
+
+const formatSignedCurrency = (value: number | null | undefined) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `¥${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+};
 
 const MetricCard: React.FC<MetricCardProps> = ({
   label,
@@ -53,9 +54,12 @@ const MetricCard: React.FC<MetricCardProps> = ({
 }) => {
   const theme = useTheme();
 
+  const isMissing = value === null || value === undefined || Number.isNaN(value);
+
   const getColor = () => {
-    if (trend === 'up' || (showSign && value > 0)) return theme.palette.success.main;
-    if (trend === 'down' || (showSign && value < 0)) return theme.palette.error.main;
+    if (isMissing) return theme.palette.text.primary;
+    if (trend === 'up' || (showSign && (value as number) > 0)) return theme.palette.success.main;
+    if (trend === 'down' || (showSign && (value as number) < 0)) return theme.palette.error.main;
     return theme.palette.text.primary;
   };
 
@@ -102,7 +106,16 @@ const MetricCard: React.FC<MetricCardProps> = ({
             fontFamily: 'JetBrains Mono, monospace',
           }}
         >
-          {showSign && value > 0 ? '+' : ''}{prefix}{value.toFixed(suffix === '%' ? 2 : 0)}{suffix}
+          {isMissing
+            ? '—'
+            : (
+              <>
+                {showSign && (value as number) > 0 ? '+' : ''}
+                {prefix}
+                {(value as number).toFixed(suffix === '%' ? 2 : 0)}
+                {suffix}
+              </>
+            )}
         </Typography>
         {secondary && (
           <Typography variant="caption" color="text.secondary">
@@ -174,7 +187,7 @@ const ReturnsOverview: React.FC<ReturnsOverviewProps> = ({ data, loading = false
             label={t('portfolio.todayPnl', '今日收益')}
             value={data.today_pnl_pct}
             icon={<CalendarToday sx={{ fontSize: 16 }} />}
-            secondary={`¥${data.today_pnl >= 0 ? '+' : ''}${data.today_pnl.toFixed(2)}`}
+            secondary={formatSignedCurrency(data.today_pnl)}
           />
         </Grid>
 
@@ -184,7 +197,7 @@ const ReturnsOverview: React.FC<ReturnsOverviewProps> = ({ data, loading = false
             label={t('portfolio.weekPnl', '本周收益')}
             value={data.week_pnl_pct}
             icon={<TrendingUp sx={{ fontSize: 16 }} />}
-            secondary={`¥${data.week_pnl >= 0 ? '+' : ''}${data.week_pnl.toFixed(2)}`}
+            secondary={formatSignedCurrency(data.week_pnl)}
           />
         </Grid>
 
@@ -194,7 +207,7 @@ const ReturnsOverview: React.FC<ReturnsOverviewProps> = ({ data, loading = false
             label={t('portfolio.monthPnl', '本月收益')}
             value={data.month_pnl_pct}
             icon={<TrendingUp sx={{ fontSize: 16 }} />}
-            secondary={`¥${data.month_pnl >= 0 ? '+' : ''}${data.month_pnl.toFixed(2)}`}
+            secondary={formatSignedCurrency(data.month_pnl)}
           />
         </Grid>
 
@@ -204,7 +217,7 @@ const ReturnsOverview: React.FC<ReturnsOverviewProps> = ({ data, loading = false
             label={t('portfolio.totalReturn', '累计收益')}
             value={data.total_pnl_pct}
             icon={<ShowChart sx={{ fontSize: 16 }} />}
-            secondary={`¥${data.total_pnl >= 0 ? '+' : ''}${data.total_pnl.toFixed(2)}`}
+            secondary={formatSignedCurrency(data.total_pnl)}
           />
         </Grid>
 

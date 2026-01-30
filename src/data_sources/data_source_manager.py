@@ -239,7 +239,8 @@ def get_northbound_flow_from_tushare() -> Dict:
         if len(df) >= 5:
             recent_5 = df.sort_values('trade_date', ascending=False).head(5)
             # Handle None values in sum, convert from 百万 to 亿
-            total_5d = recent_5['north_money'].fillna(0).sum() / 100
+            # Convert to numeric first in case values are strings
+            total_5d = pd.to_numeric(recent_5['north_money'], errors='coerce').fillna(0).sum() / 100
             result['5日累计净流入'] = f"{_safe_float(total_5d):.2f}亿"
 
         return result

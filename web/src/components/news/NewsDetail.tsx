@@ -6,7 +6,6 @@ import {
   IconButton,
   Button,
   Divider,
-  CircularProgress,
   Link,
   Skeleton,
 } from '@mui/material';
@@ -36,8 +35,7 @@ const sentimentConfig = {
 };
 
 export default function NewsDetail({ news, analysis, loading, onToggleBookmark }: NewsDetailProps) {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language === 'zh';
+  const { t } = useTranslation();
 
   if (!news) {
     return (
@@ -54,7 +52,7 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
       >
         <ArticleIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
         <Typography variant="body1">
-          {isZh ? '选择一条资讯查看详情' : 'Select a news item to view details'}
+          {t('news.detail.select_prompt')}
         </Typography>
       </Box>
     );
@@ -133,10 +131,10 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
               <AutoAwesomeIcon sx={{ color: '#6366f1', fontSize: 20 }} />
               <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#0f172a' }}>
-                {isZh ? 'AI 智能分析' : 'AI Analysis'}
+                {t('news.detail.ai_analysis')}
               </Typography>
               {analysis?.cached && (
-                <Chip label={isZh ? '缓存' : 'Cached'} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />
+                <Chip label={t('news.detail.cached')} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />
               )}
             </Box>
 
@@ -168,12 +166,12 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
                     >
                       <sentimentInfo.icon sx={{ fontSize: 18, color: sentimentInfo.color }} />
                       <Typography variant="body2" sx={{ fontWeight: 600, color: sentimentInfo.color }}>
-                        {isZh ? sentimentInfo.labelZh : sentimentInfo.labelEn}
+                        {t(`news.detail.sentiment.${sentiment}`)}
                       </Typography>
                     </Box>
                     {analysis?.sentiment_score !== undefined && (
                       <Typography variant="caption" sx={{ color: '#64748b' }}>
-                        {isZh ? '置信度' : 'Score'}: {(analysis.sentiment_score * 100).toFixed(0)}%
+                        {t('news.detail.confidence')}: {(analysis.sentiment_score * 100).toFixed(0)}%
                       </Typography>
                     )}
                   </Box>
@@ -183,7 +181,7 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
                 {analysis?.summary && (
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, display: 'block', mb: 0.5 }}>
-                      {isZh ? '一句话摘要' : 'Summary'}
+                      {t('news.detail.summary')}
                     </Typography>
                     <Typography variant="body2" sx={{ color: '#0f172a', lineHeight: 1.6 }}>
                       {analysis.summary}
@@ -195,7 +193,7 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
                 {analysis?.key_points && analysis.key_points.length > 0 && (
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, display: 'block', mb: 0.5 }}>
-                      {isZh ? '核心要点' : 'Key Points'}
+                      {t('news.detail.key_points')}
                     </Typography>
                     <Box component="ul" sx={{ m: 0, pl: 2 }}>
                       {analysis.key_points.map((point: string, idx: number) => (
@@ -213,7 +211,7 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
                 {analysis?.related_stocks && analysis.related_stocks.length > 0 && (
                   <Box>
                     <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, display: 'block', mb: 0.5 }}>
-                      {isZh ? '相关个股' : 'Related Stocks'}
+                      {t('news.detail.related_stocks')}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                       {analysis.related_stocks.map((stock: any, idx: number) => {
@@ -243,7 +241,7 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
 
         {/* Original Content */}
         <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, display: 'block', mb: 1 }}>
-          {isZh ? '原文内容' : 'Original Content'}
+          {t('news.detail.original_content')}
         </Typography>
         <Typography
           variant="body2"
@@ -253,14 +251,14 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
             whiteSpace: 'pre-wrap',
           }}
         >
-          {news.content || (isZh ? '暂无详细内容' : 'No content available')}
+          {news.content || t('news.detail.no_content')}
         </Typography>
 
         {/* Related Stocks from News */}
         {news.related_stocks && news.related_stocks.length > 0 && (
           <Box sx={{ mt: 3 }}>
             <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, display: 'block', mb: 1 }}>
-              {isZh ? '提及股票' : 'Mentioned Stocks'}
+              {t('news.detail.mentioned_stocks')}
             </Typography>
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
               {news.related_stocks.map((stock, idx) => (
@@ -295,7 +293,7 @@ export default function NewsDetail({ news, analysis, loading, onToggleBookmark }
               },
             }}
           >
-            {isZh ? '查看原文' : 'View Original'}
+            {t('news.detail.view_original')}
           </Button>
         </Box>
       )}

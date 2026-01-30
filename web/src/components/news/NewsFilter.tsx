@@ -7,6 +7,8 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ArticleIcon from '@mui/icons-material/Article';
+import PublicIcon from '@mui/icons-material/Public';
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -19,6 +21,8 @@ interface NewsFilterProps {
   onSearchChange: (query: string) => void;
   category: NewsCategory;
   onCategoryChange: (category: NewsCategory) => void;
+  timeRange: 'all' | '1d' | '3d' | '7d';
+  onTimeRangeChange: (range: 'all' | '1d' | '3d' | '7d') => void;
   showCategoryChips?: boolean;
 }
 
@@ -31,6 +35,8 @@ interface CategoryChip {
 
 const categories: CategoryChip[] = [
   { id: 'all', labelZh: '全部', labelEn: 'All', icon: <ArticleIcon sx={{ fontSize: 16 }} /> },
+  { id: 'realtime', labelZh: '实时', labelEn: 'Realtime', icon: <PublicIcon sx={{ fontSize: 16 }} /> },
+  { id: 'morning', labelZh: '早餐', labelEn: 'Morning', icon: <WbSunnyIcon sx={{ fontSize: 16 }} /> },
   { id: 'flash', labelZh: '快讯', labelEn: 'Flash', icon: <FlashOnIcon sx={{ fontSize: 16 }} /> },
   { id: 'announcement', labelZh: '公告', labelEn: 'Announce', icon: <CampaignIcon sx={{ fontSize: 16 }} /> },
   { id: 'research', labelZh: '研报', labelEn: 'Research', icon: <DescriptionIcon sx={{ fontSize: 16 }} /> },
@@ -42,10 +48,11 @@ export default function NewsFilter({
   onSearchChange,
   category,
   onCategoryChange,
+  timeRange,
+  onTimeRangeChange,
   showCategoryChips = false,
 }: NewsFilterProps) {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language === 'zh';
+  const { t } = useTranslation();
 
   return (
     <Box sx={{ p: 2, borderBottom: '1px solid #f1f5f9' }}>
@@ -53,7 +60,7 @@ export default function NewsFilter({
       <TextField
         fullWidth
         size="small"
-        placeholder={isZh ? '搜索资讯...' : 'Search news...'}
+        placeholder={t('news.filter.search')}
         value={searchQuery}
         onChange={(e) => onSearchChange(e.target.value)}
         InputProps={{
@@ -80,6 +87,31 @@ export default function NewsFilter({
         }}
       />
 
+      {/* Time range */}
+      <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
+        {([
+          { id: '1d', zh: '24h', en: '24h' },
+          { id: '3d', zh: '3天', en: '3d' },
+          { id: '7d', zh: '7天', en: '7d' },
+          { id: 'all', zh: '全部', en: 'All' },
+        ] as const).map((r) => (
+          <Chip
+            key={r.id}
+            label={t(`news.timerange.${r.id}`)}
+            onClick={() => onTimeRangeChange(r.id)}
+            variant={timeRange === r.id ? 'filled' : 'outlined'}
+            sx={{
+              backgroundColor: timeRange === r.id ? '#0ea5e9' : 'transparent',
+              color: timeRange === r.id ? '#fff' : '#64748b',
+              borderColor: '#e2e8f0',
+              '&:hover': {
+                backgroundColor: timeRange === r.id ? '#0284c7' : '#f1f5f9',
+              },
+            }}
+          />
+        ))}
+      </Box>
+
       {/* Category chips (for mobile) */}
       {showCategoryChips && (
         <Box
@@ -97,7 +129,7 @@ export default function NewsFilter({
           {categories.map((item) => (
             <Chip
               key={item.id}
-              label={isZh ? item.labelZh : item.labelEn}
+              label={t(`news.filter.${item.id}`)}
               icon={item.icon as React.ReactElement}
               onClick={() => onCategoryChange(item.id)}
               variant={category === item.id ? 'filled' : 'outlined'}

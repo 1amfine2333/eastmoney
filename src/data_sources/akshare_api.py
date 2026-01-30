@@ -381,6 +381,91 @@ def get_stock_announcement(stock_code: str, stock_name: str) -> List[Dict]:
         print(f"Error fetching announcements for {stock_name} ({stock_code}): {e}")
     return announcements
 
+
+def get_stock_realtime_quote_min(stock_code: str) -> Dict:
+    """
+    使用分钟线数据获取最新行情（更稳定的替代方案）
+    """
+    from datetime import datetime, timedelta
+    
+    try:
+        code = _normalize_a_stock_code(stock_code)
+        if not code:
+            return {}
+        
+        now = datetime.now()
+        
+        # 判断当前是否在交易时间内
+        current_time = now.hour * 100 + now.minute
+        is_trading_hours = (930 <= current_time <= 1130) or (1300 <= current_time <= 1500)
+        
+        if is_trading_hours:
+            # 交易时间：取前5分钟到后1分钟
+            start_dt = now - timedelta(minutes=5)
+            end_dt = now + timedelta(minutes=1)
+        else:
+            # 非交易时间：取今天收盘前的数据
+            if now.hour >= 15:
+                # 收盘后，取14:55-15:01
+                start_dt = now.replace(hour=14, minute=55, second=0)
+                end_dt = now.replace(hour=15, minute=1, second=0)
+            else:
+                # 开盘前，取前一交易日收盘数据（用昨天的）
+                yesterday = now - timedelta(days=1)
+                # 如果是周一，取上周五
+                if now.weekday() == 0:
+                    yesterday = now - timedelta(days=3)
+                start_dt = yesterday.replace(hour=14, minute=55, second=0)
+                end_dt = yesterday.replace(hour=15, minute=1, second=0)
+        
+        start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+        end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        df = ak.stock_zh_a_hist_min_em(
+            symbol=code, 
+            start_date=start_str, 
+            end_date=end_str, 
+            period='1', 
+            adjust='hfq'
+        )
+        
+        if df is None or df.empty:
+            return {}
+        
+        # 获取最后一条（最新）数据
+        latest = df.iloc[-1]
+        
+        # 获取第一条用于计算涨跌
+        first_open = df.iloc[0]['开盘'] if len(df) > 0 else latest['开盘']
+        
+        # 计算涨跌幅和涨跌额（如果有昨收数据）
+        close_price = float(latest['收盘'])
+        open_price = float(latest['开盘'])
+        high_price = float(latest['最高'])
+        low_price = float(latest['最低'])
+        
+        return {
+            '代码': code,
+            '名称': '',  # 分钟线不包含名称
+            '最新价': close_price,
+            '涨跌幅': None,  # 分钟线不包含涨跌幅，需要额外计算
+            '涨跌额': None,
+            '成交量': int(latest['成交量']) * 100 if latest['成交量'] else None,
+            '成交额': float(latest['成交额']) if latest['成交额'] else None,
+            '最高': high_price,
+            '最低': low_price,
+            '今开': open_price,
+            '昨收': None,  # 分钟线不包含昨收
+            '均价': float(latest['均价']) if latest.get('均价') else None,
+            '数据时间': str(latest['时间']),
+        }
+    except Exception as e:
+        print(f"Error fetching realtime quote (min) for {stock_code}: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
 def get_stock_realtime_quote(
     stock_code: str,
     use_cache: bool = True,
@@ -883,3 +968,153 @@ def search_funds(query: str, limit: int = 10) -> List[Dict]:
             
 
     return results[:limit]
+
+
+# ============================================================================
+# SECTION 6: 市场热点与涨跌停数据 (Market Hot & Limit Data)
+# ============================================================================
+
+def get_market_activity() -> Dict:
+    """
+    获取市场活跃度统计：涨跌家数、涨跌停数量等
+    """
+    result = {}
+    try:
+        df = ak.stock_market_activity_legu()
+        if df is not None and not df.empty:
+            # 转换为字典格式
+            for _, row in df.iterrows():
+                item = row.get('item', '')
+                value = row.get('value', 0)
+                result[item] = value
+    except Exception as e:
+        print(f"Error fetching market activity: {e}")
+    return result if result else {"说明": "市场活跃度数据暂时无法获取"}
+
+
+def get_hot_stocks(limit: int = 20) -> List[Dict]:
+    """
+    获取热门股票排行榜（东方财富人气榜）
+    """
+    result = []
+    try:
+        df = ak.stock_hot_rank_em()
+        if df is not None and not df.empty:
+            df = df.head(limit)
+            for _, row in df.iterrows():
+                code = str(row.get('代码', ''))
+                # 去掉 SH/SZ 前缀
+                if code.startswith('SH') or code.startswith('SZ'):
+                    code = code[2:]
+                result.append({
+                    'rank': int(row.get('当前排名', 0)),
+                    'code': code,
+                    'name': row.get('股票名称', ''),
+                    'price': float(row.get('最新价', 0)),
+                    'change': float(row.get('涨跌额', 0)),
+                    'change_pct': float(row.get('涨跌幅', 0)),
+                })
+    except Exception as e:
+        print(f"Error fetching hot stocks: {e}")
+    return result
+
+
+def get_limit_up_pool(date: str = None, limit: int = 30) -> List[Dict]:
+    """
+    获取涨停池数据
+    
+    Args:
+        date: 日期字符串，格式 YYYYMMDD，默认为今天
+        limit: 返回数量限制
+    """
+    from datetime import datetime
+    if date is None:
+        date = datetime.now().strftime('%Y%m%d')
+    
+    result = []
+    try:
+        df = ak.stock_zt_pool_em(date)
+        if df is not None and not df.empty:
+            df = df.head(limit)
+            for _, row in df.iterrows():
+                result.append({
+                    'rank': int(row.get('序号', 0)),
+                    'code': str(row.get('代码', '')),
+                    'name': str(row.get('名称', '')),
+                    'price': float(row.get('最新价', 0)),
+                    'change_pct': float(row.get('涨跌幅', 0)),
+                    'amount': float(row.get('成交额', 0)),
+                    'market_cap': float(row.get('流通市值', 0)),
+                    'turnover': float(row.get('换手率', 0)),
+                    'seal_money': float(row.get('封板资金', 0)),
+                    'first_seal_time': str(row.get('首次封板时间', '')),
+                    'last_seal_time': str(row.get('最后封板时间', '')),
+                    'open_count': int(row.get('炸板次数', 0)),
+                    'limit_stats': str(row.get('涨停统计', '')),
+                    'consecutive': int(row.get('连板数', 0)),
+                    'industry': str(row.get('所属行业', '')),
+                })
+    except Exception as e:
+        print(f"Error fetching limit up pool: {e}")
+    return result
+
+
+def get_limit_down_pool(date: str = None, limit: int = 30) -> List[Dict]:
+    """
+    获取跌停池数据
+    
+    Args:
+        date: 日期字符串，格式 YYYYMMDD，默认为今天
+        limit: 返回数量限制
+    """
+    from datetime import datetime
+    if date is None:
+        date = datetime.now().strftime('%Y%m%d')
+    
+    result = []
+    try:
+        df = ak.stock_zt_pool_dtgc_em(date)
+        if df is not None and not df.empty:
+            df = df.head(limit)
+            for _, row in df.iterrows():
+                result.append({
+                    'rank': int(row.get('序号', 0)),
+                    'code': str(row.get('代码', '')),
+                    'name': str(row.get('名称', '')),
+                    'price': float(row.get('最新价', 0)),
+                    'change_pct': float(row.get('涨跌幅', 0)),
+                    'amount': float(row.get('成交额', 0)),
+                    'market_cap': float(row.get('流通市值', 0)),
+                    'turnover': float(row.get('换手率', 0)),
+                    'seal_money': float(row.get('封单资金', 0)),
+                    'last_seal_time': str(row.get('最后封板时间', '')),
+                    'consecutive': int(row.get('连续跌停', 0)),
+                    'open_count': int(row.get('开板次数', 0)),
+                    'industry': str(row.get('所属行业', '')),
+                })
+    except Exception as e:
+        print(f"Error fetching limit down pool: {e}")
+    return result
+
+
+def get_stock_changes(limit: int = 20) -> List[Dict]:
+    """
+    获取盘中异动股票
+    """
+    result = []
+    try:
+        df = ak.stock_changes_em(symbol="大笔买入")
+        if df is not None and not df.empty:
+            df = df.head(limit)
+            for _, row in df.iterrows():
+                code = str(row.get('代码', ''))
+                result.append({
+                    'time': str(row.get('时间', '')),
+                    'code': code,
+                    'name': str(row.get('名称', '')),
+                    'event': str(row.get('板块', '')),
+                    'price': float(row.get('相关信息', 0)) if row.get('相关信息') else 0,
+                })
+    except Exception as e:
+        print(f"Error fetching stock changes: {e}")
+    return result

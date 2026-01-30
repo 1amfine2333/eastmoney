@@ -21,15 +21,6 @@ interface NewsCardProps {
   onToggleBookmark: (e: React.MouseEvent) => void;
 }
 
-const categoryColors: Record<string, { bg: string; text: string }> = {
-  flash: { bg: '#dbeafe', text: '#1e40af' },
-  announcement: { bg: '#fce7f3', text: '#9d174d' },
-  research: { bg: '#d1fae5', text: '#065f46' },
-  hot: { bg: '#fee2e2', text: '#991b1b' },
-  industry: { bg: '#e0e7ff', text: '#3730a3' },
-  general: { bg: '#f1f5f9', text: '#475569' },
-};
-
 const sourceColors: Record<string, 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info'> = {
   '财联社': 'error',
   'sina': 'warning',
@@ -78,10 +69,8 @@ function formatRelativeTime(datetime: string, isZh: boolean): string {
 }
 
 export default function NewsCard({ news, selected, onClick, onToggleBookmark }: NewsCardProps) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const isZh = i18n.language === 'zh';
-
-  const categoryStyle = categoryColors[news.category] || categoryColors.general;
   const sourceColor = sourceColors[news.source_name] || sourceColors[news.source] || 'default';
 
   const getSentimentIcon = () => {
@@ -121,7 +110,7 @@ export default function NewsCard({ news, selected, onClick, onToggleBookmark }: 
         />
         {news.importance === 'high' && (
           <Chip
-            label={isZh ? '重要' : 'Important'}
+            label={t('news.card.important')}
             size="small"
             color="error"
             variant="outlined"
@@ -132,7 +121,7 @@ export default function NewsCard({ news, selected, onClick, onToggleBookmark }: 
         <Typography variant="caption" sx={{ color: '#94a3b8', ml: 'auto' }}>
           {formatRelativeTime(news.published_at, isZh)}
         </Typography>
-        <Tooltip title={news.is_bookmarked ? (isZh ? '取消收藏' : 'Remove bookmark') : (isZh ? '收藏' : 'Bookmark')}>
+        <Tooltip title={news.is_bookmarked ? t('news.card.unbookmark') : t('news.card.bookmark')}>
           <IconButton
             size="small"
             onClick={onToggleBookmark}

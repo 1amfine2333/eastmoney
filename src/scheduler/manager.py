@@ -132,7 +132,7 @@ class SchedulerManager:
         if not self.scheduler.get_job(job_id):
             self.scheduler.add_job(
                 self.create_all_portfolio_snapshots,
-                trigger=CronTrigger(hour=23, minute=0),
+                trigger=CronTrigger(hour=10, minute=34),
                 id=job_id,
                 replace_existing=True,
                 max_instances=1,
@@ -183,6 +183,7 @@ class SchedulerManager:
         snapshot_date = date.today().strftime('%Y-%m-%d')
         created_count = 0
         error_count = 0
+        skipped_count = 0
 
         for portfolio in portfolios:
             try:
@@ -194,36 +195,54 @@ class SchedulerManager:
                     continue
 
                 # Calculate portfolio value using current prices
+                # CRITICAL: Do NOT use avg_cost as fallback - this would corrupt P&L data
                 total_value = 0
                 total_cost = 0
+                missing_assets = []  # Track assets where price fetch failed
+                is_complete = True   # Flag to mark if all prices were fetched successfully
 
                 for pos in positions:
                     shares = float(pos.get('total_shares', 0))
                     avg_cost = float(pos.get('average_cost', 0))
+                    asset_code = pos.get('asset_code')
+                    asset_type = pos.get('asset_type')
                     current_price = pos.get('current_price')
 
                     if current_price:
                         total_value += shares * float(current_price)
                     else:
-                        # Fetch current price
-                        price = self._get_current_price(pos.get('asset_code'), pos.get('asset_type'))
-                        total_value += shares * (price or avg_cost)
+                        # Fetch current price from TuShare
+                        price = self._get_current_price(asset_code, asset_type)
+                        if price is not None:
+                            total_value += shares * price
+                        else:
+                            # Price fetch failed - mark as incomplete, do NOT use avg_cost
+                            logger.warning(f"Price unavailable for {asset_type}/{asset_code}, skipping from total_value")
+                            missing_assets.append(f"{asset_type}:{asset_code}")
+                            is_complete = False
+                            # Skip this position from value calculation entirely
+                            # We don't add anything to total_value for this position
 
                     total_cost += shares * avg_cost
 
+                # If no valid prices could be fetched, skip this portfolio snapshot
                 if total_value <= 0:
+                    if missing_assets:
+                        logger.warning(f"Skipping snapshot for portfolio {portfolio_id}: no valid prices, missing: {missing_assets}")
+                        skipped_count += 1
                     continue
 
-                cumulative_pnl = total_value - total_cost
-                cumulative_pnl_pct = ((total_value / total_cost) - 1) * 100 if total_cost > 0 else 0
+                # Calculate cumulative P&L (only meaningful if data is complete)
+                cumulative_pnl = total_value - total_cost if is_complete else None
+                cumulative_pnl_pct = ((total_value / total_cost) - 1) * 100 if (is_complete and total_cost > 0) else None
 
                 # Calculate daily P&L
-                daily_pnl = 0
-                daily_pnl_pct = 0
+                daily_pnl = None
+                daily_pnl_pct = None
                 prev_snapshot = get_latest_snapshot(portfolio_id)
                 if prev_snapshot and prev_snapshot['snapshot_date'] != snapshot_date:
                     prev_value = float(prev_snapshot.get('total_value', 0))
-                    if prev_value > 0:
+                    if prev_value > 0 and is_complete:
                         daily_pnl = total_value - prev_value
                         daily_pnl_pct = (daily_pnl / prev_value) * 100
 
@@ -231,38 +250,68 @@ class SchedulerManager:
                     'snapshot_date': snapshot_date,
                     'total_value': round(total_value, 2),
                     'total_cost': round(total_cost, 2),
-                    'daily_pnl': round(daily_pnl, 2),
-                    'daily_pnl_pct': round(daily_pnl_pct, 2),
-                    'cumulative_pnl': round(cumulative_pnl, 2),
-                    'cumulative_pnl_pct': round(cumulative_pnl_pct, 2),
+                    'daily_pnl': round(daily_pnl, 2) if daily_pnl is not None else None,
+                    'daily_pnl_pct': round(daily_pnl_pct, 2) if daily_pnl_pct is not None else None,
+                    'cumulative_pnl': round(cumulative_pnl, 2) if cumulative_pnl is not None else None,
+                    'cumulative_pnl_pct': round(cumulative_pnl_pct, 2) if cumulative_pnl_pct is not None else None,
                     'allocation': {},
+                    # Metadata for data quality tracking (stored in allocation_json)
+                    'is_complete': is_complete,
+                    'missing_assets': missing_assets if missing_assets else None,
                 }
 
                 save_portfolio_snapshot(snapshot_data, portfolio_id)
                 created_count += 1
+                
+                if not is_complete:
+                    logger.warning(f"Portfolio {portfolio_id} snapshot created with incomplete data, missing: {missing_assets}")
 
             except Exception as e:
                 error_count += 1
                 logger.error(f"Error creating snapshot for portfolio {portfolio.get('id')}: {e}")
 
-        print(f"Portfolio snapshots completed: {created_count} created, {error_count} errors")
+        print(f"Portfolio snapshots completed: {created_count} created, {skipped_count} skipped (no prices), {error_count} errors")
 
-    def _get_current_price(self, asset_code: str, asset_type: str) -> Optional[float]:
-        """Get current price for an asset"""
-        try:
-            if asset_type == 'fund':
-                from src.data_sources.akshare_api import get_fund_nav
-                nav = get_fund_nav(asset_code)
-                return float(nav) if nav else None
-            else:
-                from src.data_sources.akshare_api import get_stock_realtime_quote
-                quote = get_stock_realtime_quote(asset_code)
-                if quote and 'price' in quote:
-                    return float(quote['price'])
-                return None
-        except Exception as e:
-            logger.warning(f"Failed to get price for {asset_code}: {e}")
-            return None
+    def _get_current_price(self, asset_code: str, asset_type: str, retries: int = 2) -> Optional[float]:
+        """Get current price for an asset using TuShare as primary source.
+        
+        Args:
+            asset_code: Fund or stock code
+            asset_type: 'fund' or 'stock'
+            retries: Number of retry attempts on failure
+            
+        Returns:
+            Current price/NAV as float, or None if unavailable
+        """
+        import time
+        
+        for attempt in range(retries + 1):
+            try:
+                if asset_type == 'fund':
+                    # Use TuShare via data_source_manager for fund NAV
+                    from src.data_sources.data_source_manager import get_fund_info_from_tushare
+                    df = get_fund_info_from_tushare(asset_code)
+                    if df is not None and not df.empty and '单位净值' in df.columns:
+                        # DataFrame is sorted by date descending, first row is latest
+                        latest_nav = df.iloc[0]['单位净值']
+                        if latest_nav is not None:
+                            return float(latest_nav)
+                    return None
+                else:
+                    # Use existing stock quote API
+                    from src.data_sources.akshare_api import get_stock_realtime_quote
+                    quote = get_stock_realtime_quote(asset_code)
+                    if quote and 'price' in quote:
+                        return float(quote['price'])
+                    return None
+            except Exception as e:
+                if attempt < retries:
+                    logger.warning(f"Retry {attempt + 1}/{retries} for {asset_code}: {e}")
+                    time.sleep(1)
+                else:
+                    logger.warning(f"Failed to get price for {asset_code} after {retries + 1} attempts: {e}")
+                    return None
+        return None
 
     def add_fund_jobs(self, fund: Dict):
         """Add Pre/Post market jobs for a single fund"""

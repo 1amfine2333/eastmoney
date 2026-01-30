@@ -294,6 +294,98 @@ export interface StockItem {
   volume?: number;
 }
 
+// --- Market Data API ---
+
+export interface MarketActivity {
+  上涨: number;
+  涨停: number;
+  真实涨停: number;
+  下跌: number;
+  跌停: number;
+  真实跌停: number;
+  平盘: number;
+  活跃度: string;
+  统计日期: string;
+}
+
+export interface NorthboundFlow {
+  最新净流入: string;
+  '5日累计净流入'?: string;
+  数据日期: string;
+  沪股通?: Record<string, any>;
+  深股通?: Record<string, any>;
+}
+
+export interface MarketSummary {
+  activity: MarketActivity;
+  northbound: NorthboundFlow;
+  update_time: string;
+}
+
+export interface HotStock {
+  rank: number;
+  code: string;
+  name: string;
+  price: number;
+  change: number;
+  change_pct: number;
+}
+
+export interface LimitStock {
+  rank: number;
+  code: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  amount: number;
+  market_cap: number;
+  turnover: number;
+  seal_money: number;
+  first_seal_time?: string;
+  last_seal_time: string;
+  open_count: number;
+  limit_stats?: string;
+  consecutive: number;
+  industry: string;
+}
+
+export interface MarketDataResponse<T> {
+  items: T[];
+  update_time: string;
+}
+
+export const fetchMarketSummary = async (): Promise<MarketSummary> => {
+  const response = await api.get('/stocks/market/summary');
+  return response.data;
+};
+
+export const fetchHotStocks = async (limit: number = 20): Promise<MarketDataResponse<HotStock>> => {
+  const response = await api.get('/stocks/market/hot', { params: { limit } });
+  return response.data;
+};
+
+export const fetchLimitUpStocks = async (limit: number = 30, date?: string): Promise<MarketDataResponse<LimitStock>> => {
+  const response = await api.get('/stocks/market/limit-up', { params: { limit, date } });
+  return response.data;
+};
+
+export const fetchLimitDownStocks = async (limit: number = 30, date?: string): Promise<MarketDataResponse<LimitStock>> => {
+  const response = await api.get('/stocks/market/limit-down', { params: { limit, date } });
+  return response.data;
+};
+
+export interface MarketAIBrief {
+  brief: string;
+  update_time: string;
+  top_industries: { name: string; count: number }[];
+  error?: boolean;
+}
+
+export const fetchMarketAIBrief = async (): Promise<MarketAIBrief> => {
+  const response = await api.get('/stocks/market/ai-brief');
+  return response.data;
+};
+
 export const fetchStocks = async (): Promise<StockItem[]> => {
   const response = await api.get('/stocks');
   return response.data;
@@ -817,10 +909,11 @@ export interface NewsBookmarkRequest {
 export const fetchNewsFeed = async (
     category: string = 'all',
     page: number = 1,
-    pageSize: number = 20
+    pageSize: number = 20,
+    sinceDays?: number
 ): Promise<NewsFeedResponse> => {
     const response = await api.get('/news/feed', {
-        params: { category, page, page_size: pageSize }
+        params: { category, page, page_size: pageSize, since_days: sinceDays }
     });
     return response.data;
 };

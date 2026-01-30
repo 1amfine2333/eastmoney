@@ -9,6 +9,8 @@ import {
   Divider,
 } from '@mui/material';
 import ArticleIcon from '@mui/icons-material/Article';
+import PublicIcon from '@mui/icons-material/Public';
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -34,6 +36,8 @@ interface CategoryItem {
 
 const categories: CategoryItem[] = [
   { id: 'all', labelZh: '全部资讯', labelEn: 'All News', icon: <ArticleIcon /> },
+  { id: 'realtime', labelZh: '实时快讯', labelEn: 'Realtime', icon: <PublicIcon /> },
+  { id: 'morning', labelZh: '财经早餐', labelEn: 'Morning Brief', icon: <WbSunnyIcon /> },
   { id: 'flash', labelZh: '自选股快讯', labelEn: 'Stock Flash', icon: <FlashOnIcon /> },
   { id: 'announcement', labelZh: '公告公示', labelEn: 'Announcements', icon: <CampaignIcon /> },
   { id: 'research', labelZh: '研报速递', labelEn: 'Research', icon: <DescriptionIcon /> },
@@ -47,8 +51,7 @@ export default function NewsSidebar({
   onShowBookmarks,
   bookmarksCount,
 }: NewsSidebarProps) {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language === 'zh';
+  const { t } = useTranslation();
 
   return (
     <Box sx={{ py: 1 }}>
@@ -77,7 +80,7 @@ export default function NewsSidebar({
               {item.icon}
             </ListItemIcon>
             <ListItemText
-              primary={isZh ? item.labelZh : item.labelEn}
+              primary={t(`news.categories.${item.id}`)}
               primaryTypographyProps={{
                 fontSize: '0.875rem',
                 fontWeight: category === item.id ? 600 : 400,
@@ -114,7 +117,7 @@ export default function NewsSidebar({
             </Badge>
           </ListItemIcon>
           <ListItemText
-            primary={isZh ? '我的收藏' : 'Bookmarks'}
+            primary={t('news.sidebar.bookmarks')}
             primaryTypographyProps={{
               fontSize: '0.875rem',
               fontWeight: showBookmarks ? 600 : 400,

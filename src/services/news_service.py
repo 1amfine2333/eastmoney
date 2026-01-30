@@ -51,6 +51,8 @@ from config.settings import TAVILY_API_KEY
 class NewsCategory(str, Enum):
     """News categories for filtering"""
     ALL = "all"
+    REALTIME = "realtime"      # 实时快讯 (全球财经快讯)
+    MORNING = "morning"        # 财经早餐
     FLASH = "flash"            # 自选股快讯
     FUND = "fund"              # 自选基金
     ANNOUNCEMENT = "announcement"  # 公告公示
@@ -69,6 +71,8 @@ class NewsCacheConfig:
 # Cache configurations
 NEWS_CACHE_CONFIG = {
     NewsCategory.ALL: NewsCacheConfig(ttl=300, api_name="news_all"),
+    NewsCategory.REALTIME: NewsCacheConfig(ttl=180, api_name="news_realtime"),  # 3 min TTL for realtime
+    NewsCategory.MORNING: NewsCacheConfig(ttl=3600, api_name="news_morning"),  # 1 hour TTL for daily briefing
     NewsCategory.FLASH: NewsCacheConfig(ttl=300, api_name="news_flash"),
     NewsCategory.FUND: NewsCacheConfig(ttl=600, api_name="news_fund"),
     NewsCategory.ANNOUNCEMENT: NewsCacheConfig(ttl=1800, api_name="news_announcement"),
@@ -222,6 +226,121 @@ class NewsService:
         if news_list:
             self._set_cache(cache_key, news_list, config.ttl)
             set_news_cache(cache_key, news_list, "mixed", config.ttl)
+
+        return news_list
+
+    def get_realtime_news(self, limit: int = 50) -> List[Dict]:
+        """
+        Get realtime global financial news from AkShare.
+        
+        Uses stock_info_global_em (东方财富-全球财经快讯) which returns latest 200 items.
+        """
+        cache_key = f"realtime_news:{limit}"
+        config = NEWS_CACHE_CONFIG[NewsCategory.REALTIME]
+
+        # Check memory cache
+        cached = self._get_cache(cache_key)
+        if cached:
+            return cached
+
+        news_list = []
+
+        try:
+            import akshare as ak
+            
+            # Get global financial news (latest 200)
+            df = ak.stock_info_global_em()
+            if df is not None and not df.empty:
+                for _, row in df.head(limit).iterrows():
+                    title = str(row.get('标题', '')).strip()
+                    content = str(row.get('摘要', '')).strip()
+                    pub_time = str(row.get('发布时间', '')).strip()
+                    url = str(row.get('链接', '')).strip()
+
+                    if not title or len(title) < 5:
+                        continue
+
+                    news_list.append({
+                        "id": generate_news_hash(title, 'realtime', pub_time),
+                        "title": title,
+                        "content": content[:500] if content else '',
+                        "source": "akshare",
+                        "source_name": "东方财富",
+                        "category": "realtime",
+                        "published_at": pub_time,
+                        "url": url,
+                    })
+        except Exception as e:
+            print(f"Realtime news fetch error: {e}")
+
+        # Cache results
+        if news_list:
+            self._set_cache(cache_key, news_list, config.ttl)
+            set_news_cache(cache_key, news_list, "akshare", config.ttl)
+
+        return news_list
+
+    def get_morning_briefing(self, limit: int = 10) -> List[Dict]:
+        """
+        Get morning financial briefing from AkShare.
+        
+        Uses stock_info_cjzc_em (东方财富-财经早餐) and filters to only show today's data.
+        This data is updated daily around 6am.
+        """
+        cache_key = f"morning_briefing:{limit}"
+        config = NEWS_CACHE_CONFIG[NewsCategory.MORNING]
+
+        # Check memory cache
+        cached = self._get_cache(cache_key)
+        if cached:
+            return cached
+
+        news_list = []
+
+        try:
+            import akshare as ak
+            
+            # Get morning briefing (returns all historical, need to filter)
+            df = ak.stock_info_cjzc_em()
+            if df is not None and not df.empty:
+                # Filter to today only
+                today = datetime.now().strftime('%Y-%m-%d')
+                
+                for _, row in df.iterrows():
+                    title = str(row.get('标题', '')).strip()
+                    content = str(row.get('摘要', '')).strip()
+                    pub_time = str(row.get('发布时间', '')).strip()
+                    url = str(row.get('链接', '')).strip()
+
+                    # Only include today's briefing
+                    if not pub_time.startswith(today):
+                        continue
+
+                    if not title:
+                        continue
+
+                    news_list.append({
+                        "id": generate_news_hash(title, 'morning', pub_time),
+                        "title": title,
+                        "content": content[:2000] if content else '',  # Morning briefing has longer content
+                        "source": "akshare",
+                        "source_name": "东方财富财经早餐",
+                        "category": "morning",
+                        "published_at": pub_time,
+                        "url": url,
+                        "importance": "high",
+                    })
+
+                    if len(news_list) >= limit:
+                        break
+
+        except Exception as e:
+            print(f"Morning briefing fetch error: {e}")
+
+        # Cache results
+        if news_list:
+            self._set_cache(cache_key, news_list, config.ttl)
+            set_news_cache(cache_key, news_list, "akshare", config.ttl)
 
         return news_list
 
@@ -545,7 +664,8 @@ class NewsService:
         user_id: int,
         category: str = "all",
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
+        since_days: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Get personalized news feed for a user.
@@ -577,46 +697,65 @@ class NewsService:
 
         news_list = []
 
+        # We paginate in-memory after aggregating and deduplicating. To make paging work,
+        # we must fetch more than a single page from upstream sources.
+        # Cap to avoid excessive load on data sources.
+        end_idx = page * page_size
+        fetch_limit = min(200, max(60, end_idx + page_size))
+
         # Fetch news based on category
         if category == "all":
             # Mix of all categories
             if has_watchlist:
                 # Personalized: stock news + hot news
-                stock_news = self.get_stock_news(stock_codes, limit=15)
-                hot_news = self.get_hot_news(limit=15)
+                stock_limit = max(20, fetch_limit // 2)
+                hot_limit = max(20, fetch_limit - stock_limit)
+                stock_news = self.get_stock_news(stock_codes, limit=stock_limit)
+                hot_news = self.get_hot_news(limit=hot_limit)
                 news_list = self._merge_and_sort_news(stock_news, hot_news)
             else:
                 # No watchlist: hot news only
-                news_list = self.get_hot_news(limit=30)
+                news_list = self.get_hot_news(limit=fetch_limit)
 
         elif category == "flash":
             # Stock-related news
             if stock_codes:
-                news_list = self.get_stock_news(stock_codes, limit=30)
+                news_list = self.get_stock_news(stock_codes, limit=fetch_limit)
             else:
-                news_list = self.get_hot_news(limit=30)
+                news_list = self.get_hot_news(limit=fetch_limit)
 
         elif category == "announcement":
             # Company announcements
             if stock_codes:
-                for code in stock_codes[:5]:
-                    news_list.extend(self.get_announcements(stock_code=code, limit=10))
+                codes = stock_codes[:5]
+                per_stock_limit = max(10, min(30, fetch_limit // max(1, len(codes))))
+                for code in codes:
+                    news_list.extend(self.get_announcements(stock_code=code, limit=per_stock_limit))
             else:
-                news_list = self.get_announcements(limit=30)
+                news_list = self.get_announcements(limit=fetch_limit)
 
         elif category == "research":
             # Research reports (search based on watchlist)
+            research_limit = min(50, fetch_limit)
             if stock_codes:
                 # Use first few stock names for search
                 stock_names = [s.get('name', '') for s in stocks[:3] if s.get('name')]
                 if stock_names:
                     query = ' '.join(stock_names)
-                    news_list = self.search_research_reports(query, limit=20)
+                    news_list = self.search_research_reports(query, limit=research_limit)
             if not news_list:
-                news_list = self.search_research_reports("A股 投资策略", limit=20)
+                news_list = self.search_research_reports("A股 投资策略", limit=research_limit)
 
         elif category == "hot":
-            news_list = self.get_hot_news(limit=30)
+            news_list = self.get_hot_news(limit=fetch_limit)
+
+        elif category == "realtime":
+            # Global realtime financial news (not related to watchlist)
+            news_list = self.get_realtime_news(limit=fetch_limit)
+
+        elif category == "morning":
+            # Daily morning briefing (today only)
+            news_list = self.get_morning_briefing(limit=10)
 
         # Deduplicate
         seen = set()
@@ -626,12 +765,29 @@ class NewsService:
                 seen.add(item['id'])
                 unique_news.append(item)
 
+        # Optional: apply time range filter before adding user status/pagination
+        if since_days is not None:
+            try:
+                days = int(since_days)
+            except Exception:
+                days = 0
+
+            if days > 0:
+                cutoff = datetime.now() - timedelta(days=days)
+                unique_news = [
+                    item for item in unique_news
+                    if self._parse_published_at(item.get('published_at', '')) >= cutoff
+                ]
+
         # Add user status (read/bookmarked)
         read_hashes = get_user_read_news_hashes(user_id)
         for item in unique_news:
             item['is_read'] = item['id'] in read_hashes
             status = get_news_status(user_id, item['id'])
             item['is_bookmarked'] = status.get('is_bookmarked', False) if status else False
+
+        # Always sort by time (newest first) before pagination.
+        unique_news.sort(key=lambda x: self._parse_published_at(x.get('published_at', '')), reverse=True)
 
         # Pagination
         start_idx = (page - 1) * page_size
@@ -649,23 +805,37 @@ class NewsService:
             all_news.extend(news_list)
 
         # Sort by published_at (newest first)
-        def parse_datetime(item):
-            dt_str = item.get('published_at', '')
-            if not dt_str:
-                return datetime.min
-            try:
-                # Try various formats
-                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y%m%d %H:%M:%S', '%Y-%m-%d', '%Y%m%d']:
-                    try:
-                        return datetime.strptime(dt_str[:len(fmt.replace('%', ''))], fmt)
-                    except:
-                        continue
-                return datetime.min
-            except:
-                return datetime.min
-
-        all_news.sort(key=parse_datetime, reverse=True)
+        all_news.sort(key=lambda x: self._parse_published_at(x.get('published_at', '')), reverse=True)
         return all_news
+
+    def _parse_published_at(self, dt_str: Any) -> datetime:
+        """Parse published_at into datetime. Returns datetime.min if unknown."""
+        if not dt_str:
+            return datetime.min
+
+        s = str(dt_str).strip()
+        if not s:
+            return datetime.min
+
+        # Normalize common variants
+        s = s.replace('T', ' ').replace('/', '-').replace('Z', '')
+
+        fmts = [
+            ('%Y-%m-%d %H:%M:%S', 19),
+            ('%Y%m%d %H:%M:%S', 17),
+            ('%Y-%m-%d %H:%M', 16),
+            ('%Y%m%d %H:%M', 14),
+            ('%Y-%m-%d', 10),
+            ('%Y%m%d', 8),
+        ]
+
+        for fmt, length in fmts:
+            try:
+                return datetime.strptime(s[:length], fmt)
+            except Exception:
+                continue
+
+        return datetime.min
 
     # =========================================================================
     # AI Analysis
@@ -829,7 +999,24 @@ class NewsService:
 
     def get_bookmarks(self, user_id: int, limit: int = 50, offset: int = 0) -> List[Dict]:
         """Get user's bookmarked news"""
-        return get_user_bookmarked_news(user_id, limit, offset)
+        raw_bookmarks = get_user_bookmarked_news(user_id, limit, offset)
+        
+        # Transform to match NewsItem structure expected by frontend
+        result = []
+        for b in raw_bookmarks:
+            result.append({
+                "id": b.get("news_hash", ""),
+                "title": b.get("news_title", ""),
+                "content": "",  # Content not stored in bookmarks table
+                "source": b.get("news_source", "") or "unknown",
+                "source_name": b.get("news_source", "") or "收藏",
+                "category": b.get("news_category", "") or "hot",
+                "published_at": b.get("bookmarked_at", ""),
+                "url": b.get("news_url", "") or "",
+                "is_read": bool(b.get("is_read", False)),
+                "is_bookmarked": True,
+            })
+        return result
 
     # =========================================================================
     # Summary & Stats

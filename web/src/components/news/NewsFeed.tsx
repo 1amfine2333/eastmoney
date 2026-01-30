@@ -30,8 +30,7 @@ export default function NewsFeed({
   hasMore,
   loading,
 }: NewsFeedProps) {
-  const { i18n } = useTranslation();
-  const isZh = i18n.language === 'zh';
+  const { t } = useTranslation();
   const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Infinite scroll using Intersection Observer
@@ -68,12 +67,10 @@ export default function NewsFeed({
       >
         <ArticleIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
         <Typography variant="h6" sx={{ mb: 1 }}>
-          {isZh ? '暂无资讯' : 'No news available'}
+          {t('news.feed.no_news')}
         </Typography>
         <Typography variant="body2" sx={{ textAlign: 'center' }}>
-          {isZh
-            ? '当前分类下暂无资讯，请尝试切换其他分类'
-            : 'No news in this category. Try switching to another category.'}
+          {t('news.feed.no_news_hint')}
         </Typography>
       </Box>
     );
@@ -120,7 +117,7 @@ export default function NewsFeed({
               },
             }}
           >
-            {isZh ? '加载更多' : 'Load More'}
+            {t('news.feed.load_more')}
           </Button>
         </Box>
       )}
@@ -129,7 +126,7 @@ export default function NewsFeed({
       {!hasMore && news.length > 0 && (
         <Box sx={{ textAlign: 'center', p: 3, color: '#94a3b8' }}>
           <Typography variant="body2">
-            {isZh ? '已加载全部资讯' : 'All news loaded'}
+            {t('news.feed.all_loaded')}
           </Typography>
         </Box>
       )}

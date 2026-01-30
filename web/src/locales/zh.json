@@ -552,6 +552,10 @@
     "add_stock": "添加股票",
     "table": {
       "symbol": "代码",
+      "code": "代码",
+      "name": "名称",
+      "price": "现价",
+      "change": "涨跌幅",
       "sector": "板块",
       "market": "市场",
       "volume": "总手",
@@ -716,6 +720,29 @@
       "analysis_started": "正在为 {{name}} 生成{{mode}}分析报告，请稍候...",
       "analysis_success": "{{name}} 分析报告生成完成",
       "analysis_error": "分析失败，请重试"
+    },
+    "watchlist_title": "我的自选",
+    "market": {
+      "pulse_title": "市场脉搏",
+      "load_error": "加载数据失败",
+      "no_data": "暂无数据",
+      "rising": "上涨",
+      "falling": "下跌",
+      "limit_up": "涨停",
+      "limit_down": "跌停",
+      "flat": "平盘",
+      "northbound": "北向资金",
+      "northbound_5d": "5日累计净流入",
+      "hot_stocks": "热门股票",
+      "limit_up_pool": "涨停池",
+      "limit_down_pool": "跌停池",
+      "turnover": "换手率",
+      "seal_time": "封板时间",
+      "consecutive": "连板",
+      "industry": "行业",
+      "ai_brief_title": "AI 市场速览",
+      "ai_analyzing": "分析中",
+      "ai_unavailable": "AI 分析暂时不可用"
     }
   },
   "sentiment": {
@@ -1096,6 +1123,8 @@
     "subtitle": "个性化财经资讯聚合",
     "categories": {
       "all": "全部资讯",
+      "realtime": "实时快讯",
+      "morning": "财经早餐",
       "flash": "自选股快讯",
       "fund": "自选基金",
       "announcement": "公告公示",
@@ -1109,10 +1138,29 @@
     "filter": {
       "search": "搜索资讯...",
       "all": "全部",
+      "realtime": "实时",
+      "morning": "早餐",
       "flash": "快讯",
+      "announcement": "公告",
       "announce": "公告",
       "research": "研报",
       "hot": "热门"
+    },
+    "timerange": {
+      "1d": "24h",
+      "3d": "3天",
+      "7d": "7天",
+      "all": "全部"
+    },
+    "header": {
+      "watchlist": "正在为您聚合 {{stocksCount}} 只股票、{{fundsCount}} 只基金的资讯",
+      "no_watchlist": "添加自选股获取个性化资讯推送",
+      "total": "共 {{count}} 条"
+    },
+    "toast": {
+      "bookmarked": "已收藏",
+      "unbookmarked": "已取消收藏",
+      "action_failed": "操作失败"
     },
     "card": {
       "bookmark": "收藏",

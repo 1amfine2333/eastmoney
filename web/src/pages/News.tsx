@@ -18,13 +18,45 @@ import NewsFilter from '../components/news/NewsFilter';
 import { fetchNewsFeed, fetchNewsDetail, toggleNewsBookmark, fetchNewsBookmarks } from '../api';
 import type { NewsItem, NewsFeedResponse } from '../api';
 
-export type NewsCategory = 'all' | 'flash' | 'announcement' | 'research' | 'hot';
+export type NewsCategory = 'all' | 'realtime' | 'morning' | 'flash' | 'announcement' | 'research' | 'hot';
+
+const NEWS_PAGE_SIZE = 50;
+
+type TimeRange = 'all' | '1d' | '3d' | '7d';
+
+const parsePublishedAtMs = (value?: string) => {
+  if (!value) return 0;
+  const s = String(value).trim().replace('T', ' ').replace('Z', '');
+
+  // YYYYMMDD HH:mm:ss
+  if (/^\d{8}\s\d{2}:\d{2}:\d{2}/.test(s)) {
+    const y = s.slice(0, 4);
+    const m = s.slice(4, 6);
+    const d = s.slice(6, 8);
+    const time = s.slice(9, 17);
+    const t = Date.parse(`${y}-${m}-${d}T${time}`);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  // YYYYMMDD
+  if (/^\d{8}$/.test(s)) {
+    const y = s.slice(0, 4);
+    const m = s.slice(4, 6);
+    const d = s.slice(6, 8);
+    const t = Date.parse(`${y}-${m}-${d}`);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  // YYYY-MM-DD HH:mm:ss / YYYY-MM-DD
+  const normalized = s.includes(' ') ? s.replace(' ', 'T') : s;
+  const t = Date.parse(normalized);
+  return Number.isFinite(t) ? t : 0;
+};
 
 export default function NewsPage() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isZh = i18n.language === 'zh';
 
   // News state
   const [news, setNews] = useState<NewsItem[]>([]);
@@ -39,6 +71,7 @@ export default function NewsPage() {
   // Category & Filter
   const [category, setCategory] = useState<NewsCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [timeRange, setTimeRange] = useState<TimeRange>('3d');
 
   // Selected news for detail view
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
@@ -71,7 +104,8 @@ export default function NewsPage() {
       setError(null);
 
       const currentPage = resetPage ? 1 : page;
-      const response: NewsFeedResponse = await fetchNewsFeed(category, currentPage, 20);
+      const sinceDays = timeRange === 'all' ? undefined : Number(timeRange.replace('d', ''));
+      const response: NewsFeedResponse = await fetchNewsFeed(category, currentPage, NEWS_PAGE_SIZE, sinceDays);
 
       if (resetPage) {
         setNews(response.news || []);
@@ -94,11 +128,14 @@ export default function NewsPage() {
 
   // Initial load and category change
   useEffect(() => {
+    // Don't reload news when in bookmarks view - bookmarks are filtered client-side
+    if (showBookmarks) return;
+    
     setNews([]);
     setPage(1);
     setSelectedNews(null);
     loadNews(true);
-  }, [category]);
+  }, [category, timeRange, showBookmarks]);
 
   // Load more on page change
   useEffect(() => {
@@ -164,13 +201,13 @@ export default function NewsPage() {
 
       showNotify(
         newBookmarked
-          ? (isZh ? '已收藏' : 'Bookmarked')
-          : (isZh ? '已取消收藏' : 'Bookmark removed'),
+          ? t('news.toast.bookmarked')
+          : t('news.toast.unbookmarked'),
         'success'
       );
     } catch (err) {
       console.error('Failed to toggle bookmark:', err);
-      showNotify(isZh ? '操作失败' : 'Action failed', 'error');
+      showNotify(t('news.toast.action_failed'), 'error');
     }
   };
 
@@ -191,6 +228,7 @@ export default function NewsPage() {
   const handleShowBookmarks = () => {
     setShowBookmarks(true);
     setSelectedNews(null);
+    loadBookmarks();  // Refresh bookmarks when switching to bookmarks view
   };
 
   // Filtered news for display
@@ -202,22 +240,36 @@ export default function NewsPage() {
       )
     : displayedNews;
 
+  const rangeFilteredNews = (() => {
+    if (timeRange === 'all') return filteredNews;
+    const days = Number(timeRange.replace('d', ''));
+    const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    return filteredNews.filter((item) => parsePublishedAtMs(item.published_at) >= cutoffMs);
+  })();
+
+  // Ensure newest news shows first across all tabs/categories
+  const sortedNews = [...rangeFilteredNews].sort((a, b) => parsePublishedAtMs(b.published_at) - parsePublishedAtMs(a.published_at));
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <Box sx={{ p: 2, borderBottom: '1px solid #f1f5f9' }}>
         <Typography variant="h5" sx={{ fontWeight: 700, color: '#0f172a' }}>
-          {isZh ? '资讯中心' : 'News Center'}
+          {t('news.title')}
         </Typography>
         <Typography variant="body2" sx={{ color: '#64748b', mt: 0.5 }}>
           {hasWatchlist
-            ? (isZh
-              ? `正在为您聚合 ${watchlistSummary?.stocks_count || 0} 只股票、${watchlistSummary?.funds_count || 0} 只基金的资讯`
-              : `Aggregating news for ${watchlistSummary?.stocks_count || 0} stocks and ${watchlistSummary?.funds_count || 0} funds`)
-            : (isZh
-              ? '添加自选股获取个性化资讯推送'
-              : 'Add stocks to your watchlist for personalized news')}
+            ? t('news.header.watchlist', {
+                stocksCount: watchlistSummary?.stocks_count || 0,
+                fundsCount: watchlistSummary?.funds_count || 0,
+              })
+            : t('news.header.no_watchlist')}
         </Typography>
+        {total > 0 && (
+          <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mt: 0.25 }}>
+            {t('news.header.total', { count: total })}
+          </Typography>
+        )}
       </Box>
 
       {/* Main content - 3 column layout */}
@@ -243,6 +295,11 @@ export default function NewsPage() {
             onSearchChange={setSearchQuery}
             category={category}
             onCategoryChange={handleCategoryChange}
+            timeRange={timeRange}
+            onTimeRangeChange={(next) => {
+              setTimeRange(next);
+              // Don't exit bookmarks view when changing time range
+            }}
             showCategoryChips={isMobile}
           />
 
@@ -258,7 +315,7 @@ export default function NewsPage() {
               </Box>
             ) : (
               <NewsFeed
-                news={filteredNews}
+                news={sortedNews}
                 selectedId={selectedNews?.id}
                 onSelect={handleSelectNews}
                 onToggleBookmark={handleToggleBookmark}

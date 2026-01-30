@@ -553,6 +553,10 @@
     "add_stock": "Add Stock",
     "table": {
       "symbol": "SYMBOL",
+      "code": "Code",
+      "name": "Name",
+      "price": "Price",
+      "change": "Change",
       "sector": "SECTOR",
       "market": "MARKET",
       "volume": "HANDS",
@@ -717,6 +721,29 @@
       "analysis_started": "{{mode}} analysis started for {{name}}, please wait...",
       "analysis_success": "Analysis complete for {{name}}",
       "analysis_error": "Analysis failed, please try again"
+    },
+    "watchlist_title": "My Watchlist",
+    "market": {
+      "pulse_title": "Market Pulse",
+      "load_error": "Failed to load data",
+      "no_data": "No data available",
+      "rising": "Rising",
+      "falling": "Falling",
+      "limit_up": "Limit Up",
+      "limit_down": "Limit Down",
+      "flat": "Flat",
+      "northbound": "Northbound",
+      "northbound_5d": "5-Day Net Inflow",
+      "hot_stocks": "Hot Stocks",
+      "limit_up_pool": "Limit Up Pool",
+      "limit_down_pool": "Limit Down Pool",
+      "turnover": "Turnover",
+      "seal_time": "Seal Time",
+      "consecutive": "Streak",
+      "industry": "Industry",
+      "ai_brief_title": "AI Market Brief",
+      "ai_analyzing": "Analyzing",
+      "ai_unavailable": "AI analysis unavailable"
     }
   },
   "sentiment": {
@@ -1097,6 +1124,8 @@
     "subtitle": "Personalized Financial News",
     "categories": {
       "all": "All News",
+      "realtime": "Realtime",
+      "morning": "Morning Brief",
       "flash": "Stock Flash",
       "fund": "Fund News",
       "announcement": "Announcements",
@@ -1110,10 +1139,29 @@
     "filter": {
       "search": "Search news...",
       "all": "All",
+      "realtime": "Realtime",
+      "morning": "Morning",
       "flash": "Flash",
+      "announcement": "Announcements",
       "announce": "Announce",
       "research": "Research",
       "hot": "Hot"
+    },
+    "timerange": {
+      "1d": "24h",
+      "3d": "3d",
+      "7d": "7d",
+      "all": "All"
+    },
+    "header": {
+      "watchlist": "Aggregating news for {{stocksCount}} stocks and {{fundsCount}} funds",
+      "no_watchlist": "Add stocks to your watchlist for personalized news",
+      "total": "{{count}} items"
+    },
+    "toast": {
+      "bookmarked": "Bookmarked",
+      "unbookmarked": "Bookmark removed",
+      "action_failed": "Action failed"
     },
     "card": {
       "bookmark": "Bookmark",

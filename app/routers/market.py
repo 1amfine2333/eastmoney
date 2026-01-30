@@ -14,8 +14,8 @@ import pandas as pd
 from app.core.config import MARKET_FUNDS_CACHE, MARKET_STOCKS_CACHE, CONFIG_DIR
 from app.core.cache import indices_cache
 from app.core.utils import sanitize_data
-from src.data_sources.akshare_api import search_funds, get_stock_realtime_quote, get_stock_history
-from src.data_sources.tushare_client import search_funds_tushare
+from src.data_sources.akshare_api import search_funds, get_stock_realtime_quote, get_stock_realtime_quote_min, get_stock_history
+from src.data_sources.tushare_client import search_funds_tushare, _get_tushare_pro
 from src.storage.db import search_stock_basic, get_stock_basic_count
 
 router = APIRouter(tags=["Market"])
@@ -199,9 +199,43 @@ async def search_market_stocks(query: str = ""):
 async def get_stock_details_endpoint(code: str):
     """Get stock details including realtime quote and company info."""
     try:
-        quote = get_stock_realtime_quote(code)
+        # 优先使用分钟线获取实时行情（更稳定）
+        quote = get_stock_realtime_quote_min(code)
+        
+        # 如果分钟线没有数据，降级到原方法
+        if not quote or not quote.get('最新价'):
+            quote = get_stock_realtime_quote(code)
 
         info = {}
+        
+        # 使用 TuShare 日线数据获取昨收（更稳定）
+        if quote and not quote.get('昨收'):
+            try:
+                from datetime import datetime, timedelta
+                end_date = datetime.now().strftime('%Y%m%d')
+                start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+                
+                # 转换股票代码为 TuShare 格式
+                ts_code = f"{code}.SH" if code.startswith('6') else f"{code}.SZ"
+                
+                pro = _get_tushare_pro()
+                df_daily = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                
+                if df_daily is not None and not df_daily.empty:
+                    # 按日期排序，取最新的一条
+                    df_daily = df_daily.sort_values('trade_date', ascending=False)
+                    latest_row = df_daily.iloc[0]
+                    prev_close_val = float(latest_row['pre_close'])
+                    quote['昨收'] = prev_close_val
+                    if quote.get('最新价') and prev_close_val > 0:
+                        change = quote['最新价'] - prev_close_val
+                        change_pct = (change / prev_close_val) * 100
+                        quote['涨跌额'] = round(change, 2)
+                        quote['涨跌幅'] = round(change_pct, 2)
+            except Exception as daily_err:
+                print(f"Failed to get prev close from TuShare: {daily_err}")
+        
+        # 获取公司信息
         try:
             df = ak.stock_individual_info_em(symbol=code)
             if not df.empty:

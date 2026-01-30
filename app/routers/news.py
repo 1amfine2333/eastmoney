@@ -18,7 +18,8 @@ router = APIRouter(prefix="/api/news", tags=["News"])
 async def get_news_feed(
     category: str = "all",
     page: int = 1,
-    page_size: int = 20,
+    page_size: int = 50,
+    since_days: Optional[int] = None,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -31,7 +32,8 @@ async def get_news_feed(
             user_id=current_user.id,
             category=category,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            since_days=since_days,
         )
         return sanitize_for_json(data)
     except Exception as e:
@@ -76,7 +78,7 @@ async def get_news_watchlist_summary(current_user: User = Depends(get_current_us
 @router.get("/announcements")
 async def get_news_announcements(
     stock_code: Optional[str] = None,
-    limit: int = 20,
+    limit: int = 50,
     current_user: User = Depends(get_current_user)
 ):
     """Get company announcements."""
@@ -95,7 +97,7 @@ async def get_news_announcements(
 @router.get("/research")
 async def search_news_research(
     query: str,
-    limit: int = 10,
+    limit: int = 30,
     current_user: User = Depends(get_current_user)
 ):
     """Search for research reports via Tavily."""

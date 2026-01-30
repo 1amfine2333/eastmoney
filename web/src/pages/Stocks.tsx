@@ -29,7 +29,9 @@ import {
   Snackbar,
   Alert,
   Tabs,
-  Tab
+  Tab,
+  alpha,
+  useTheme,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -48,6 +50,7 @@ import CandlestickChartIcon from '@mui/icons-material/CandlestickChart';
 import EventIcon from '@mui/icons-material/Event';
 import SpeedIcon from '@mui/icons-material/Speed';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import FilterListIcon from '@mui/icons-material/FilterList';
 
 import {
   fetchStocks,
@@ -61,10 +64,21 @@ import {
 
 import type { MarketStock, StockItem, StockDetails, NavPoint } from '../api';
 import { useAppContext } from '../contexts/AppContext';
-import { FinancialTab, ShareholderTab, MarginTab, EventsTab, QuantTab, AIDiagnosisCard } from '../components/stock';
+import { 
+  FinancialTab, 
+  ShareholderTab, 
+  MarginTab, 
+  EventsTab, 
+  QuantTab, 
+  AIDiagnosisCard,
+  MarketPulseCard,
+  HotStocksList,
+  LimitPoolTabs,
+} from '../components/stock';
 
 export default function StocksPage() {
   const { t } = useTranslation();
+  const theme = useTheme();
   const { setCurrentPage, setCurrentStock } = useAppContext();
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -257,7 +271,7 @@ export default function StocksPage() {
     const values = data.map(d => d.value);
     const min = Math.min(...values);
     const max = Math.max(...values);
-    const range = max - min;
+    const range = max - min || 1;
     const padding = 20;
     const width = 800;
     const height = 240;
@@ -268,22 +282,24 @@ export default function StocksPage() {
       return `${x},${y}`;
     }).join(' ');
 
+    const trendColor = values[values.length - 1] >= values[0] ? '#ef4444' : '#22c55e'; // Red Up, Green Down
+
     return (
-      <Box sx={{ bgcolor: '#fcfcfc', p: 2, borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+      <Box sx={{ bgcolor: alpha(trendColor, 0.02), p: 2, borderRadius: '12px', border: `1px solid ${alpha(trendColor, 0.1)}` }}>
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48 overflow-visible">
           {[0, 0.25, 0.5, 0.75, 1].map((v) => {
               const y = (height - padding) - v * (height - 2 * padding);
               const val = (min + v * range).toFixed(2);
               return (
                   <g key={v}>
-                      <line x1={padding} y1={y} x2={width-padding} y2={y} stroke="#e2e8f0" strokeDasharray="4 4" />
-                      <text x={0} y={y + 4} fontSize="10" fill="#94a3b8" fontFamily="JetBrains Mono">{val}</text>
+                      <line x1={padding} y1={y} x2={width-padding} y2={y} stroke={alpha(theme.palette.divider, 0.5)} strokeDasharray="4 4" />
+                      <text x={0} y={y + 4} fontSize="10" fill={theme.palette.text.secondary} fontFamily="JetBrains Mono">{val}</text>
                   </g>
               )
           })}
           <polyline
             fill="none"
-            stroke="#6366f1"
+            stroke={trendColor}
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -291,7 +307,7 @@ export default function StocksPage() {
           />
           <path
             d={`M${padding},${height-padding} L${points} L${width-padding},${height-padding} Z`}
-            fill="rgba(99, 102, 241, 0.08)"
+            fill={alpha(trendColor, 0.08)}
           />
         </svg>
       </Box>
@@ -299,121 +315,198 @@ export default function StocksPage() {
   };
 
   return (
-    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3, pb: 4 }}>
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <Typography variant="h4" className="font-bold text-slate-900" sx={{ fontFamily: 'JetBrains Mono' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 800, color: 'text.primary', fontFamily: 'JetBrains Mono', letterSpacing: '-0.02em' }}>
             {t('stocks.title')}
           </Typography>
-          <Typography variant="subtitle1" className="text-slate-500 mt-1">
+          <Typography variant="subtitle1" sx={{ color: 'text.secondary', mt: 0.5, fontWeight: 500 }}>
             {t('stocks.subtitle')}
           </Typography>
-        </div>
+        </Box>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
           sx={{
-            backgroundColor: '#6366f1',
-            borderRadius: '10px',
+            backgroundColor: '#0f172a',
+            color: '#fff',
+            borderRadius: '8px',
             px: 3,
+            py: 1,
             textTransform: 'none',
-            fontWeight: 600,
-            '&:hover': { backgroundColor: '#4f46e5' }
+            fontWeight: 700,
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+            '&:hover': { backgroundColor: '#1e293b' }
           }}
         >
           {t('stocks.add_stock')}
         </Button>
-      </div>
+      </Box>
 
-      {loading ? (
-        <div className="flex justify-center py-20">
-          <CircularProgress size={32} sx={{ color: '#6366f1' }} />
-        </div>
-      ) : (
-        <TableContainer component={Paper} elevation={0} sx={{ borderRadius: '16px', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
-          <Table sx={{ minWidth: 650 }}>
-            <TableHead sx={{ bgcolor: '#f8fafc' }}>
-              <TableRow>
-                <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('stocks.table.symbol')}</TableCell>
-                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('stocks.table.latest_price')}</TableCell>
-                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('common.change')}</TableCell>
-                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('stocks.table.volume')}</TableCell>
-                <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('stocks.table.sector')}</TableCell>
-                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('common.actions')}</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {stocks.map((stock) => (
-                <TableRow 
-                  key={stock.code} 
-                  hover 
-                  onClick={() => handleViewDetails(stock)}
-                  sx={{ cursor: 'pointer', '&:last-child td, &:last-child th': { border: 0 } }}
-                >
-                  <TableCell sx={{ py: 2.5 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Box sx={{ p: 1, bgcolor: '#f1f5f9', borderRadius: '10px', color: '#6366f1' }}>    
-                        <ShowChartIcon fontSize="small" />
-                      </Box>
-                      <Box>
-                        <Typography sx={{ fontWeight: 800, color: '#1e293b', fontSize: '0.9rem' }}>{stock.name}</Typography>
-                        <Typography sx={{ color: '#94a3b8', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>{stock.code}</Typography>
-                      </Box>
-                    </Box>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Typography sx={{ fontWeight: 700, color: '#1e293b', fontFamily: 'JetBrains Mono' }}>
-                        {stock.price ? stock.price.toFixed(2) : '---'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Typography sx={{ 
-                        fontWeight: 800, 
-                        color: (stock.change_pct || 0) >= 0 ? '#ef4444' : '#22c55e', 
-                        fontFamily: 'JetBrains Mono' 
-                    }}>
-                        {stock.change_pct ? `${stock.change_pct > 0 ? '+' : ''}${stock.change_pct.toFixed(2)}%` : '---'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Typography sx={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 700, fontFamily: 'JetBrains Mono' }}>
-                        {stock.volume ? (stock.volume / 100).toLocaleString() : '---'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    {stock.sector && (
-                        <Chip 
-                        label={stock.sector} 
-                        size="small" 
-                        variant="outlined" 
-                        sx={{ 
-                            fontSize: '0.65rem', 
-                            fontWeight: 800, 
-                            color: '#64748b', 
-                            bgcolor: '#f8fafc',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px'
-                        }} 
-                        />
-                    )}
-                  </TableCell>
-                  <TableCell align="right">
-                    <IconButton 
-                      size="small" 
-                      onClick={(e) => handleOpenMenu(e, stock)}
-                      sx={{ color: '#94a3b8', '&:hover': { color: '#6366f1', bgcolor: 'rgba(99, 102, 241, 0.05)' } }}
-                    >
-                      <MoreVertIcon fontSize="small" />
-                    </IconButton>
-                  </TableCell>
+      {/* Market Overview Section */}
+      <MarketPulseCard />
+
+      {/* Market Discovery Section */}
+      <Grid container spacing={3}>
+        <Grid size={{ xs: 12, md: 4 }}>
+          <HotStocksList 
+            onStockClick={(code, name) => handleViewDetails({ code, name, is_active: true })} 
+            limit={15}
+          />
+        </Grid>
+        <Grid size={{ xs: 12, md: 8 }}>
+          <LimitPoolTabs 
+            onStockClick={(code, name) => handleViewDetails({ code, name, is_active: true })}
+            limit={20}
+          />
+        </Grid>
+      </Grid>
+
+      {/* Watchlist Section */}
+      <Paper 
+        elevation={0}
+        sx={{ 
+          borderRadius: 3, 
+          border: '1px solid',
+          borderColor: 'divider',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: alpha(theme.palette.background.paper, 0.5) }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ p: 0.5, bgcolor: alpha(theme.palette.primary.main, 0.1), borderRadius: 1, color: 'primary.main' }}>
+              <FilterListIcon fontSize="small" />
+            </Box>
+            <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1.1rem' }}>
+              {t('stocks.watchlist_title')}
+            </Typography>
+            <Chip 
+              label={stocks.length} 
+              size="small" 
+              sx={{ ml: 1, height: 20, fontSize: '0.75rem', fontWeight: 600, bgcolor: alpha(theme.palette.divider, 0.1) }} 
+            />
+          </Box>
+          {/* Future: Add Sort/Filter controls here */}
+        </Box>
+
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+            <CircularProgress size={32} sx={{ color: 'primary.main' }} />
+          </Box>
+        ) : (
+          <TableContainer>
+            <Table sx={{ minWidth: 650 }}>
+              <TableHead sx={{ bgcolor: 'background.default' }}>
+                <TableRow>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 700, fontSize: '0.75rem', py: 1.5, pl: 3 }}>{t('stocks.table.symbol')}</TableCell>
+                  <TableCell align="right" sx={{ color: 'text.secondary', fontWeight: 700, fontSize: '0.75rem', py: 1.5 }}>{t('stocks.table.latest_price')}</TableCell>
+                  <TableCell align="right" sx={{ color: 'text.secondary', fontWeight: 700, fontSize: '0.75rem', py: 1.5 }}>{t('common.change')}</TableCell>
+                  <TableCell align="right" sx={{ color: 'text.secondary', fontWeight: 700, fontSize: '0.75rem', py: 1.5 }}>{t('stocks.table.volume')}</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 700, fontSize: '0.75rem', py: 1.5 }}>{t('stocks.table.sector')}</TableCell>
+                  <TableCell align="right" sx={{ color: 'text.secondary', fontWeight: 700, fontSize: '0.75rem', py: 1.5, pr: 3 }}>{t('common.actions')}</TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
+              </TableHead>
+              <TableBody>
+                {stocks.map((stock) => {
+                  const isPositive = (stock.change_pct || 0) > 0;
+                  const isNegative = (stock.change_pct || 0) < 0;
+                  const color = isPositive ? '#ef4444' : isNegative ? '#22c55e' : 'text.primary';
+                  
+                  return (
+                    <TableRow 
+                      key={stock.code} 
+                      hover 
+                      onClick={() => handleViewDetails(stock)}
+                      sx={{ 
+                        cursor: 'pointer', 
+                        '&:last-child td, &:last-child th': { border: 0 },
+                        transition: 'background-color 0.2s',
+                        '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.04) }
+                      }}
+                    >
+                      <TableCell sx={{ py: 2, pl: 3 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <Box sx={{ 
+                            p: 1, 
+                            bgcolor: alpha(theme.palette.background.paper, 0.8), 
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: '10px', 
+                            color: 'primary.main',
+                            display: 'flex',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                          }}>    
+                            <ShowChartIcon fontSize="small" />
+                          </Box>
+                          <Box>
+                            <Typography sx={{ fontWeight: 700, color: 'text.primary', fontSize: '0.9rem' }}>{stock.name}</Typography>
+                            <Typography sx={{ color: 'text.secondary', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>{stock.code}</Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography sx={{ fontWeight: 700, color: 'text.primary', fontFamily: 'JetBrains Mono', fontSize: '0.95rem' }}>
+                            {stock.price ? stock.price.toFixed(2) : '---'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Chip 
+                          label={stock.change_pct ? `${stock.change_pct > 0 ? '+' : ''}${stock.change_pct.toFixed(2)}%` : '---'}
+                          size="small"
+                          sx={{ 
+                            bgcolor: isPositive ? alpha('#ef4444', 0.1) : isNegative ? alpha('#22c55e', 0.1) : alpha(theme.palette.divider, 0.1),
+                            color: color,
+                            fontWeight: 700,
+                            fontFamily: 'JetBrains Mono',
+                            borderRadius: '6px',
+                            height: 24
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography sx={{ color: 'text.secondary', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>
+                            {stock.volume ? (stock.volume / 100).toLocaleString() : '---'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {stock.sector && (
+                            <Chip 
+                            label={stock.sector} 
+                            size="small" 
+                            variant="outlined" 
+                            sx={{ 
+                                fontSize: '0.65rem', 
+                                fontWeight: 700, 
+                                color: 'text.secondary', 
+                                borderColor: alpha(theme.palette.divider, 0.8),
+                                borderRadius: '6px',
+                                height: 22
+                            }} 
+                            />
+                        )}
+                      </TableCell>
+                      <TableCell align="right" sx={{ pr: 3 }}>
+                        <IconButton 
+                          size="small" 
+                          onClick={(e) => handleOpenMenu(e, stock)}
+                          sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.1) } }}
+                        >
+                          <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
 
       {/* Notifications */}
       <Snackbar 
@@ -435,11 +528,11 @@ export default function StocksPage() {
         transformOrigin={{ horizontal: 'right', vertical: 'top' }}
         anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
         PaperProps={{
-            elevation: 2,
+            elevation: 0,
             sx: {
                 minWidth: 200,
-                bgcolor: '#ffffff',
-                border: '1px solid #e2e8f0',
+                border: '1px solid',
+                borderColor: 'divider',
                 borderRadius: '12px',
                 mt: 1,
                 boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'
@@ -447,36 +540,36 @@ export default function StocksPage() {
         }}
       >
         <MenuItem onClick={() => { handleCloseMenu(); if (menuStock) handleViewDetails(menuStock); }} sx={{ py: 1.5 }}>
-            <ListItemIcon><AnalyticsIcon fontSize="small" sx={{ color: '#6366f1' }} /></ListItemIcon>
+            <ListItemIcon><AnalyticsIcon fontSize="small" sx={{ color: 'primary.main' }} /></ListItemIcon>
             <ListItemText primary={t('stocks.menu.view_details')} primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 700 }} />
         </MenuItem>
 
-        <Divider sx={{ my: 0.5, borderColor: '#f1f5f9' }} />
+        <Divider sx={{ my: 0.5 }} />
 
         <MenuItem onClick={() => { if (menuStock) handleAnalyzeStock(menuStock, 'pre'); }} sx={{ py: 1 }}>
             <ListItemIcon><WbSunnyIcon fontSize="small" sx={{ color: '#f59e0b' }} /></ListItemIcon>
-            <ListItemText primary={t('stocks.menu.pre_market_analysis')} primaryTypographyProps={{ fontSize: '0.85rem', color: '#334155' }} />
+            <ListItemText primary={t('stocks.menu.pre_market_analysis')} primaryTypographyProps={{ fontSize: '0.85rem' }} />
         </MenuItem>
         <MenuItem onClick={() => { if (menuStock) handleAnalyzeStock(menuStock, 'post'); }} sx={{ py: 1 }}>
             <ListItemIcon><NightsStayIcon fontSize="small" sx={{ color: '#8b5cf6' }} /></ListItemIcon>
-            <ListItemText primary={t('stocks.menu.post_market_analysis')} primaryTypographyProps={{ fontSize: '0.85rem', color: '#334155' }} />
+            <ListItemText primary={t('stocks.menu.post_market_analysis')} primaryTypographyProps={{ fontSize: '0.85rem' }} />
         </MenuItem>
 
-        <Divider sx={{ my: 0.5, borderColor: '#f1f5f9' }} />
+        <Divider sx={{ my: 0.5 }} />
 
         <MenuItem onClick={() => { handleCloseMenu(); if (menuStock) handleOpenDialog(menuStock); }} sx={{ py: 1 }}>
-            <ListItemIcon><EditIcon fontSize="small" sx={{ color: '#64748b' }} /></ListItemIcon>
-            <ListItemText primary={t('stocks.menu.edit_config')} primaryTypographyProps={{ fontSize: '0.85rem', color: '#334155' }} />
+            <ListItemIcon><EditIcon fontSize="small" sx={{ color: 'text.secondary' }} /></ListItemIcon>
+            <ListItemText primary={t('stocks.menu.edit_config')} primaryTypographyProps={{ fontSize: '0.85rem' }} />
         </MenuItem>
         <MenuItem onClick={() => { handleCloseMenu(); if (menuStock) handleDelete(menuStock.code); }} sx={{ py: 1 }}>
             <ListItemIcon><DeleteIcon fontSize="small" color="error" /></ListItemIcon>
-            <ListItemText primary={t('common.delete')} primaryTypographyProps={{ fontSize: '0.85rem', color: '#f43f5e', fontWeight: 700 }} />
+            <ListItemText primary={t('common.delete')} primaryTypographyProps={{ fontSize: '0.85rem', color: 'error.main', fontWeight: 700 }} />
         </MenuItem>
       </Menu>
 
       {/* Add/Edit Stock Dialog */}
-      <Dialog open={openDialog} onClose={() => setOpenDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800, borderBottom: '1px solid #f1f5f9' }}>
+      <Dialog open={openDialog} onClose={() => setOpenDialog(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+        <DialogTitle sx={{ fontWeight: 800, borderBottom: '1px solid', borderColor: 'divider' }}>
             {editingStock ? t('stocks.dialog.edit_title') : t('stocks.dialog.add_title')}
         </DialogTitle>
         <DialogContent>
@@ -485,7 +578,7 @@ export default function StocksPage() {
                 {/* 1. Market Search */}
                 {!editingStock && (
                     <Box>
-                        <Typography variant="overline" sx={{ color: '#64748b', fontWeight: 800, mb: 1, display: 'block' }}>{t('stocks.dialog.market_search')}</Typography>
+                        <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 800, mb: 1, display: 'block' }}>{t('stocks.dialog.market_search')}</Typography>
                         <Autocomplete
                             fullWidth
                             inputValue={inputValue}
@@ -529,7 +622,7 @@ export default function StocksPage() {
 
                 {/* 2. Asset Identity */}
                 <Box>
-                    <Typography variant="overline" sx={{ color: '#64748b', fontWeight: 800, mb: 1, display: 'block' }}>{t('stocks.dialog.stock_info')}</Typography>
+                    <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 800, mb: 1, display: 'block' }}>{t('stocks.dialog.stock_info')}</Typography>
                     <Grid container spacing={2}>
                         <Grid size={4}>
                             <TextField
@@ -557,12 +650,12 @@ export default function StocksPage() {
 
                 {/* 3. Config */}
                 <Box>
-                    <Typography variant="overline" sx={{ color: '#64748b', fontWeight: 800, mb: 1, display: 'block' }}>{t('stocks.dialog.config')}</Typography>
+                    <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 800, mb: 1, display: 'block' }}>{t('stocks.dialog.config')}</Typography>
                     <Grid container spacing={2}>
                         <Grid size={6}>
-                            <Box sx={{ p: 1.5, bgcolor: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
-                                <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mb: 0.5, fontWeight: 700 }}>{t('stocks.dialog.sector')}</Typography>
-                                <Typography variant="body2" sx={{ color: '#334155', fontWeight: 500 }}>
+                            <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: '8px', border: '1px dashed', borderColor: 'divider' }}>
+                                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5, fontWeight: 700 }}>{t('stocks.dialog.sector')}</Typography>
+                                <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
                                     {editingStock?.sector || (formCode ? "Auto-detected upon save" : "---")}
                                 </Typography>
                             </Box>
@@ -581,12 +674,12 @@ export default function StocksPage() {
                 </Box>
             </Box>
         </DialogContent>
-        <DialogActions sx={{ p: 3, borderTop: '1px solid #f1f5f9' }}>
-          <Button onClick={() => setOpenDialog(false)} sx={{ color: '#64748b', fontWeight: 700 }}>{t('common.cancel')}</Button>
+        <DialogActions sx={{ p: 3, borderTop: '1px solid', borderColor: 'divider' }}>
+          <Button onClick={() => setOpenDialog(false)} sx={{ color: 'text.secondary', fontWeight: 700 }}>{t('common.cancel')}</Button>
           <Button 
             onClick={handleSave} 
             variant="contained" 
-            sx={{ bgcolor: '#6366f1', fontWeight: 800, borderRadius: '8px', px: 4, '&:hover': { bgcolor: '#4f46e5' } }}
+            sx={{ bgcolor: '#0f172a', fontWeight: 800, borderRadius: '8px', px: 4, '&:hover': { bgcolor: '#1e293b' } }}
           >
             {t('common.save')}
           </Button>
@@ -603,7 +696,7 @@ export default function StocksPage() {
         PaperProps={{
           sx: {
             borderRadius: '20px',
-            bgcolor: '#ffffff',
+            bgcolor: 'background.paper',
             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
             maxHeight: '90vh'
           }
@@ -611,19 +704,20 @@ export default function StocksPage() {
       >
         <DialogTitle sx={{ p: 0 }}>
           <Box sx={{
-            bgcolor: '#fcfcfc',
+            bgcolor: 'background.default',
             p: 3,
-            borderBottom: '1px solid #f1f5f9',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'flex-start'
           }}>
              <Box>
-                <Typography variant="h5" sx={{ fontWeight: 900, color: '#0f172a', letterSpacing: '-0.02em', mb: 1 }}>
+                <Typography variant="h5" sx={{ fontWeight: 900, color: 'text.primary', letterSpacing: '-0.02em', mb: 1 }}>
                     {selectedStock?.name}
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-                    <Box sx={{ px: 1, py: 0.25, bgcolor: '#6366f1', borderRadius: '4px' }}>
+                    <Box sx={{ px: 1, py: 0.25, bgcolor: '#0f172a', borderRadius: '4px' }}>
                         <Typography sx={{ color: '#fff', fontWeight: 800, fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>
                             {selectedStock?.code}
                         </Typography>
@@ -642,7 +736,7 @@ export default function StocksPage() {
                         borderColor: '#8b5cf6',
                         color: showAIDiagnosis ? '#fff' : '#8b5cf6',
                         '&:hover': {
-                          bgcolor: showAIDiagnosis ? '#7c3aed' : 'rgba(139, 92, 246, 0.1)',
+                          bgcolor: showAIDiagnosis ? '#7c3aed' : alpha('#8b5cf6', 0.1),
                           borderColor: '#7c3aed'
                         }
                       }}
@@ -654,13 +748,13 @@ export default function StocksPage() {
              <Box sx={{ textAlign: 'right' }}>
                  <Typography variant="h4" sx={{
                      fontWeight: 900, fontFamily: 'JetBrains Mono',
-                     color: (stockDetails?.quote?.涨跌幅 > 0) ? '#ef4444' : (stockDetails?.quote?.涨跌幅 < 0) ? '#22c55e' : '#0f172a'
+                     color: (stockDetails?.quote?.涨跌幅 > 0) ? '#ef4444' : (stockDetails?.quote?.涨跌幅 < 0) ? '#22c55e' : 'text.primary'
                  }}>
                     {stockDetails?.quote?.最新价 || '---'}
                  </Typography>
                  <Typography sx={{
                      fontWeight: 800, fontFamily: 'JetBrains Mono', fontSize: '0.9rem',
-                     color: (stockDetails?.quote?.涨跌幅 > 0) ? '#ef4444' : (stockDetails?.quote?.涨跌幅 < 0) ? '#22c55e' : '#64748b'
+                     color: (stockDetails?.quote?.涨跌幅 > 0) ? '#ef4444' : (stockDetails?.quote?.涨跌幅 < 0) ? '#22c55e' : 'text.secondary'
                  }}>
                      {stockDetails?.quote?.涨跌幅 ? `${stockDetails.quote.涨跌幅}%` : '---'}
                  </Typography>
@@ -674,55 +768,27 @@ export default function StocksPage() {
             variant="scrollable"
             scrollButtons="auto"
             sx={{
-              borderBottom: '1px solid #f1f5f9',
+              borderBottom: '1px solid',
+              borderColor: 'divider',
               px: 2,
-              bgcolor: '#fcfcfc',
-              '& .MuiTabs-indicator': { bgcolor: '#6366f1' }
+              bgcolor: 'background.default',
+              '& .MuiTabs-indicator': { bgcolor: 'primary.main' },
+              '& .MuiTab-root': { textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }
             }}
           >
-            <Tab
-              icon={<ShowChartIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              label={t('stocks.tabs.overview')}
-              sx={{ textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }}
-            />
-            <Tab
-              icon={<AccountBalanceIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              label={t('stocks.tabs.financial')}
-              sx={{ textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }}
-            />
-            <Tab
-              icon={<GroupsIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              label={t('stocks.tabs.shareholder')}
-              sx={{ textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }}
-            />
-            <Tab
-              icon={<CandlestickChartIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              label={t('stocks.tabs.margin')}
-              sx={{ textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }}
-            />
-            <Tab
-              icon={<EventIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              label={t('stocks.tabs.events')}
-              sx={{ textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }}
-            />
-            <Tab
-              icon={<SpeedIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              label={t('stocks.tabs.quant')}
-              sx={{ textTransform: 'none', fontWeight: 700, minHeight: 48, fontSize: '0.85rem' }}
-            />
+            <Tab icon={<ShowChartIcon sx={{ fontSize: 18 }} />} iconPosition="start" label={t('stocks.tabs.overview')} />
+            <Tab icon={<AccountBalanceIcon sx={{ fontSize: 18 }} />} iconPosition="start" label={t('stocks.tabs.financial')} />
+            <Tab icon={<GroupsIcon sx={{ fontSize: 18 }} />} iconPosition="start" label={t('stocks.tabs.shareholder')} />
+            <Tab icon={<CandlestickChartIcon sx={{ fontSize: 18 }} />} iconPosition="start" label={t('stocks.tabs.margin')} />
+            <Tab icon={<EventIcon sx={{ fontSize: 18 }} />} iconPosition="start" label={t('stocks.tabs.events')} />
+            <Tab icon={<SpeedIcon sx={{ fontSize: 18 }} />} iconPosition="start" label={t('stocks.tabs.quant')} />
           </Tabs>
         </DialogTitle>
 
-        <DialogContent sx={{ p: 0, bgcolor: '#ffffff' }}>
+        <DialogContent sx={{ p: 0, bgcolor: 'background.paper' }}>
           {/* AI Diagnosis Card - Overlay */}
           {showAIDiagnosis && selectedStock && (
-            <Box sx={{ p: 3, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+            <Box sx={{ p: 3, bgcolor: 'action.hover', borderBottom: '1px solid', borderColor: 'divider' }}>
               <AIDiagnosisCard
                 code={selectedStock.code}
                 stockName={selectedStock.name}
@@ -735,45 +801,45 @@ export default function StocksPage() {
           {detailTab === 0 && (
             loadingDetails ? (
               <Box sx={{ py: 12, textAlign: 'center' }}>
-                <CircularProgress size={32} thickness={5} sx={{ color: '#6366f1', mb: 2 }} />
+                <CircularProgress size={32} thickness={5} sx={{ color: 'primary.main', mb: 2 }} />
               </Box>
             ) : stockDetails ? (
               <Box sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {/* Chart Section */}
                   <Box>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                          <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <TrendingUpIcon sx={{ fontSize: 18, color: '#6366f1' }} /> {t('funds.details.performance_analytics')}
+                          <Typography variant="overline" sx={{ color: 'text.primary', fontWeight: 900, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <TrendingUpIcon sx={{ fontSize: 18, color: 'primary.main' }} /> {t('funds.details.performance_analytics')}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700 }}>{t('funds.details.last_100_days')}</Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>{t('funds.details.last_100_days')}</Typography>
                       </Box>
                       {renderMiniChart(history)}
                   </Box>
 
                   {/* Market Data */}
                   <Box>
-                      <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'block' }}>
+                      <Typography variant="overline" sx={{ color: 'text.primary', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'block' }}>
                           {t('stocks.details.market_data')}
                       </Typography>
                       <Grid container spacing={2}>
                           <Grid size={4}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.open')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.open')}</Typography>
                               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{stockDetails.quote?.今开 || '---'}</Typography>
                           </Grid>
                           <Grid size={4}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.high')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.high')}</Typography>
                               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{stockDetails.quote?.最高 || '---'}</Typography>
                           </Grid>
                           <Grid size={4}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.low')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.low')}</Typography>
                               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{stockDetails.quote?.最低 || '---'}</Typography>
                           </Grid>
                            <Grid size={4}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.volume')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.volume')}</Typography>
                               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{stockDetails.quote?.成交量 || '---'}</Typography>
                           </Grid>
                           <Grid size={4}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.amount')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.amount')}</Typography>
                               <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{stockDetails.quote?.成交额 || '---'}</Typography>
                           </Grid>
                       </Grid>
@@ -781,24 +847,24 @@ export default function StocksPage() {
 
                   {/* Company Info */}
                   <Box>
-                      <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <BusinessIcon sx={{ fontSize: 18, color: '#6366f1' }} /> {t('stocks.details.company_profile')}
+                      <Typography variant="overline" sx={{ color: 'text.primary', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <BusinessIcon sx={{ fontSize: 18, color: 'primary.main' }} /> {t('stocks.details.company_profile')}
                       </Typography>
                       <Grid container spacing={2}>
                           <Grid size={6}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.industry')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.industry')}</Typography>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{stockDetails.info?.industry || '---'}</Typography>
                           </Grid>
                           <Grid size={6}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.market_cap')}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.market_cap')}</Typography>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{stockDetails.info?.market_cap || '---'}</Typography>
                           </Grid>
                           <Grid size={3}>
-                               <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.pe')}</Typography>
+                               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.pe')}</Typography>
                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{stockDetails.info?.pe || '---'}</Typography>
                           </Grid>
                           <Grid size={3}>
-                               <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 800 }}>{t('stocks.details.pb')}</Typography>
+                               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>{t('stocks.details.pb')}</Typography>
                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{stockDetails.info?.pb || '---'}</Typography>
                           </Grid>
                       </Grid>
@@ -806,7 +872,7 @@ export default function StocksPage() {
               </Box>
             ) : (
                <Box sx={{ py: 10, textAlign: 'center' }}>
-                   <Typography sx={{ color: '#94a3b8' }}>{t('stocks.details.no_details')}</Typography>
+                   <Typography sx={{ color: 'text.secondary' }}>{t('stocks.details.no_details')}</Typography>
                </Box>
             )
           )}
@@ -846,7 +912,7 @@ export default function StocksPage() {
             </Box>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: 2, bgcolor: '#fcfcfc', borderTop: '1px solid #f1f5f9' }}>
+        <DialogActions sx={{ p: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
           <Button
             fullWidth
             onClick={() => setDetailOpen(false)}

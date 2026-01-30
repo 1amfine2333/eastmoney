@@ -2887,11 +2887,22 @@ def recalculate_position(portfolio_id: int, asset_type: str, asset_code: str, us
 # =============================================================================
 
 def save_portfolio_snapshot(snapshot_data: Dict, portfolio_id: int) -> int:
-    """Save a daily portfolio snapshot."""
+    """Save a daily portfolio snapshot.
+    
+    The allocation_json field also stores data quality metadata:
+    - is_complete: True if all position prices were successfully fetched
+    - missing_assets: List of asset codes where price fetch failed
+    """
     conn = get_db_connection()
     c = conn.cursor()
 
-    allocation_json = json.dumps(snapshot_data.get('allocation', {}), ensure_ascii=False)
+    # Store allocation data along with data quality metadata
+    allocation_data = {
+        'allocation': snapshot_data.get('allocation', {}),
+        'is_complete': snapshot_data.get('is_complete', True),
+        'missing_assets': snapshot_data.get('missing_assets'),
+    }
+    allocation_json = json.dumps(allocation_data, ensure_ascii=False)
 
     c.execute('''
         INSERT OR REPLACE INTO portfolio_snapshots (
@@ -2946,9 +2957,25 @@ def get_portfolio_snapshots(portfolio_id: int, start_date: str = None,
         d = dict(row)
         if d.get('allocation_json'):
             try:
-                d['allocation'] = json.loads(d['allocation_json'])
+                parsed = json.loads(d['allocation_json'])
+                # Handle new format with metadata
+                if isinstance(parsed, dict) and 'allocation' in parsed:
+                    d['allocation'] = parsed.get('allocation', {})
+                    d['is_complete'] = parsed.get('is_complete', True)
+                    d['missing_assets'] = parsed.get('missing_assets')
+                else:
+                    # Legacy format - just allocation dict
+                    d['allocation'] = parsed
+                    d['is_complete'] = True
+                    d['missing_assets'] = None
             except:
                 d['allocation'] = {}
+                d['is_complete'] = True
+                d['missing_assets'] = None
+        else:
+            d['allocation'] = {}
+            d['is_complete'] = True
+            d['missing_assets'] = None
         results.append(d)
 
     return results

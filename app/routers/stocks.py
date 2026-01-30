@@ -18,13 +18,22 @@ from app.core.dependencies import get_current_user, get_user_report_dir
 from app.core.cache import stock_feature_cache
 from app.core.utils import sanitize_for_json, sanitize_data
 from src.storage.db import get_all_stocks, upsert_stock, delete_stock
-from src.data_sources.akshare_api import get_stock_realtime_quote
+from src.data_sources.akshare_api import (
+    get_stock_realtime_quote,
+    get_stock_realtime_quote_min,
+    get_market_activity,
+    get_hot_stocks,
+    get_limit_up_pool,
+    get_limit_down_pool,
+    get_northbound_flow,
+)
 from src.data_sources.tushare_client import (
     get_financial_indicators, get_income_statement, get_balance_sheet, get_cashflow_statement,
     get_top10_holders, get_shareholder_number,
     get_margin_detail,
     get_forecast, get_share_float, get_dividend,
-    get_stock_factors, get_chip_performance
+    get_stock_factors, get_chip_performance,
+    _get_tushare_pro
 )
 
 router = APIRouter(prefix="/api/stocks", tags=["Stocks"])
@@ -73,24 +82,64 @@ async def get_stocks_endpoint(current_user: User = Depends(get_current_user)):
 
         # Use akshare fallback if needed
         if use_akshare_fallback:
+            # 预先获取所有股票的昨收价（从 TuShare daily）
+            prev_close_map = {}
+            try:
+                pro = _get_tushare_pro()
+                end_date = datetime.now().strftime('%Y%m%d')
+                start_date = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+                
+                def fetch_prev_close(code):
+                    ts_code = f"{code}.SH" if code.startswith('6') else f"{code}.SZ"
+                    try:
+                        df_daily = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                        if df_daily is not None and not df_daily.empty:
+                            df_daily = df_daily.sort_values('trade_date', ascending=False)
+                            return (code, float(df_daily.iloc[0]['pre_close']))
+                    except Exception:
+                        pass
+                    return (code, None)
+                
+                # 并行获取昨收
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    results_prev = list(executor.map(fetch_prev_close, [s['code'] for s in stocks]))
+                    for code, prev_close in results_prev:
+                        if prev_close:
+                            prev_close_map[code] = prev_close
+                            
+            except Exception as e:
+                print(f"Failed to fetch prev_close from TuShare: {e}")
+
             def fetch_single_quote(stock):
                 item = dict(stock)
+                code = stock['code']
                 try:
-                    # Use our existing akshare wrapper function
-                    quote = get_stock_realtime_quote(stock['code'])
+                    # 优先使用分钟线获取最新价（更稳定）
+                    quote = get_stock_realtime_quote_min(code)
+                    
+                    # 如果分钟线没数据，降级到原方法
+                    if not quote or not quote.get('最新价'):
+                        quote = get_stock_realtime_quote(code)
+                    
                     if quote:
                         price = quote.get('最新价')
-                        change_pct = quote.get('涨跌幅')
                         volume = quote.get('成交量')
 
                         if price is not None:
                             item['price'] = float(price)
-                        if change_pct is not None:
-                            item['change_pct'] = float(change_pct)
+                            
+                            # 使用预获取的昨收计算涨跌幅
+                            prev_close = prev_close_map.get(code)
+                            if prev_close and prev_close > 0:
+                                change_pct = ((float(price) - prev_close) / prev_close) * 100
+                                item['change_pct'] = round(change_pct, 2)
+                            elif quote.get('涨跌幅') is not None:
+                                item['change_pct'] = float(quote.get('涨跌幅'))
+                                
                         if volume is not None:
                             item['volume'] = float(volume)
                 except Exception as e:
-                    print(f"Error fetching quote for {stock['code']}: {e}")
+                    print(f"Error fetching quote for {code}: {e}")
                     import traceback
                     traceback.print_exc()
                 return StockItem(**item)
@@ -169,7 +218,7 @@ async def list_stock_reports(current_user: User = Depends(get_current_user)):
         return []
 
     reports = []
-    files = glob.glob(os.path.join(stocks_dir, "*.md"))
+    files = glob(os.path.join(stocks_dir, "*.md"))
     files.sort(key=os.path.getmtime, reverse=True)
 
     for f in files:
@@ -197,6 +246,182 @@ async def list_stock_reports(current_user: User = Depends(get_current_user)):
             continue
 
     return reports
+
+
+# ============================================================================
+# Market Data Endpoints (公开接口，无需登录)
+# ============================================================================
+
+@router.get("/market/summary")
+async def get_market_summary():
+    """
+    获取市场概览数据：涨跌统计、北向资金等
+    """
+    try:
+        # 并行获取市场活跃度和北向资金
+        activity_result = await asyncio.to_thread(get_market_activity)
+        northbound_result = await asyncio.to_thread(get_northbound_flow)
+        
+        return {
+            "activity": activity_result,
+            "northbound": northbound_result,
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        print(f"Error fetching market summary: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/market/hot")
+async def get_hot_stocks_endpoint(limit: int = 20):
+    """
+    获取热门股票排行榜
+    """
+    try:
+        result = await asyncio.to_thread(get_hot_stocks, limit)
+        return {
+            "items": result,
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        print(f"Error fetching hot stocks: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/market/limit-up")
+async def get_limit_up_endpoint(limit: int = 30, date: str = None):
+    """
+    获取涨停池数据
+    """
+    try:
+        result = await asyncio.to_thread(get_limit_up_pool, date, limit)
+        return {
+            "items": result,
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        print(f"Error fetching limit up pool: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/market/limit-down")
+async def get_limit_down_endpoint(limit: int = 30, date: str = None):
+    """
+    获取跌停池数据
+    """
+    try:
+        result = await asyncio.to_thread(get_limit_down_pool, date, limit)
+        return {
+            "items": result,
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        print(f"Error fetching limit down pool: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# AI 市场速览缓存
+_ai_brief_cache: Dict[str, Any] = {}
+_ai_brief_cache_time: float = 0
+
+
+@router.get("/market/ai-brief")
+async def get_market_ai_brief():
+    """
+    获取 AI 市场速览，结合热门股票和涨跌停数据生成简短分析
+    缓存5分钟
+    """
+    import time
+    global _ai_brief_cache, _ai_brief_cache_time
+    
+    # 检查缓存 (5分钟)
+    cache_ttl = 300
+    now = time.time()
+    if _ai_brief_cache and (now - _ai_brief_cache_time) < cache_ttl:
+        return _ai_brief_cache
+    
+    try:
+        # 并行获取数据
+        activity_result = await asyncio.to_thread(get_market_activity)
+        hot_result = await asyncio.to_thread(get_hot_stocks, 10)
+        limit_up_result = await asyncio.to_thread(get_limit_up_pool, None, 20)
+        limit_down_result = await asyncio.to_thread(get_limit_down_pool, None, 10)
+        
+        # 构建 LLM prompt
+        from src.llm.client import get_llm_client
+        
+        # 统计涨停行业分布
+        industry_count = {}
+        for stock in limit_up_result:
+            ind = stock.get('industry', '其他')
+            industry_count[ind] = industry_count.get(ind, 0) + 1
+        top_industries = sorted(industry_count.items(), key=lambda x: -x[1])[:5]
+        
+        hot_names = [f"{s['name']}({s['change_pct']:+.1f}%)" for s in hot_result[:5]]
+        limit_up_names = [f"{s['name']}({s['consecutive']}板)" if s['consecutive'] > 1 else s['name'] for s in limit_up_result[:5]]
+        limit_down_names = [s['name'] for s in limit_down_result[:5]]
+        
+        prompt = f"""你是一位专业的A股市场分析师。请根据以下今日市场数据，生成一段简洁的市场速览（2-3句话，不超过100字）。
+
+## 今日市场数据
+- 上涨家数：{activity_result.get('上涨', 0)}，下跌家数：{activity_result.get('下跌', 0)}
+- 涨停：{activity_result.get('涨停', 0)}只（真实涨停{activity_result.get('真实涨停', 0)}只）
+- 跌停：{activity_result.get('跌停', 0)}只（真实跌停{activity_result.get('真实跌停', 0)}只）
+
+## 热门股票 TOP5
+{', '.join(hot_names)}
+
+## 涨停行业分布
+{', '.join([f"{ind}({cnt}只)" for ind, cnt in top_industries])}
+
+## 部分涨停股
+{', '.join(limit_up_names)}
+
+## 部分跌停股
+{', '.join(limit_down_names) if limit_down_names else '无'}
+
+请输出：
+1. 一句话概括今日市场整体情况（多空态势）
+2. 一句话点明今日市场主线/热点板块
+3. 如有特别值得关注的个股（如连板股），简要提及
+
+直接输出分析内容，不要包含标题或序号。"""
+
+        llm = get_llm_client()
+        brief = await asyncio.to_thread(llm.generate_content, prompt)
+        
+        result = {
+            "brief": brief.strip(),
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "top_industries": [{"name": ind, "count": cnt} for ind, cnt in top_industries],
+        }
+        
+        # 更新缓存
+        _ai_brief_cache = result
+        _ai_brief_cache_time = now
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error generating AI market brief: {e}")
+        import traceback
+        traceback.print_exc()
+        # 返回降级内容
+        return {
+            "brief": "AI 分析暂时不可用，请稍后重试。",
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "top_industries": [],
+            "error": True
+        }
+
 
 @router.delete("/{code}")
 async def delete_stock_endpoint(code: str, current_user: User = Depends(get_current_user)):
@@ -294,11 +519,15 @@ async def get_stock_financial_summary(code: str, current_user: User = Depends(ge
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{code}/shareholders")
-async def get_stock_shareholders(code: str, current_user: User = Depends(get_current_user)):
-    """Get top 10 shareholders from circulating shareholders."""
+@router.get("/{code}/shareholders/circulate")
+async def get_stock_circulate_shareholders(code: str, current_user: User = Depends(get_current_user)):
+    """Get top 10 circulating shareholders (AkShare).
+
+    Note: Kept as a separate endpoint because the main `/shareholders` endpoint
+    returns the structured TuShare-based shareholder analysis data used by the UI.
+    """
     try:
-        cache_key = f"shareholders_{code}"
+        cache_key = f"shareholders_circulate_{code}"
         cached = stock_feature_cache.get(cache_key, ttl_minutes=360)
         if cached:
             return cached
@@ -806,7 +1035,7 @@ async def get_stock_shareholders(code: str, current_user: User = Depends(get_cur
 
     Cache TTL: 6 hours
     """
-    cache_key = f"shareholders_{code}"
+    cache_key = f"shareholders_struct_{code}"
     cached = stock_feature_cache.get(cache_key, ttl_minutes=360)
     if cached:
         return cached
