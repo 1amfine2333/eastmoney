@@ -36,15 +36,18 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import HistoryIcon from '@mui/icons-material/History';
-import PieChartIcon from '@mui/icons-material/PieChart';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import CloseIcon from '@mui/icons-material/Close';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import FolderIcon from '@mui/icons-material/Folder';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import {
   LineChart,
   Line,
@@ -61,14 +64,14 @@ import {
   saveFund,
   deleteFund,
   searchMarketFunds,
-  fetchFundMarketDetails,
-  fetchFundNavHistory,
   generateReport,
   compareFundsAdvanced,
+  fetchBatchEstimation,
 } from '../api';
 
-import type { MarketFund, FundItem, NavPoint, FundComparisonResponse } from '../api';
+import type { MarketFund, FundItem, FundComparisonResponse, FundEstimation } from '../api';
 import { useAppContext } from '../contexts/AppContext';
+import { FundMarketOverview, FundRankingTable, FundDetailDialog } from '../components/fund';
 
 const CHART_COLORS = [
   '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
@@ -81,6 +84,10 @@ export default function FundsPage() {
   const { setCurrentPage, setCurrentFund } = useAppContext();
   const [funds, setFunds] = useState<FundItem[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Page Tab State
+  const [pageTab, setPageTab] = useState(0);
+  const [selectedRankingType] = useState('股票型');
   
   // Unified Dialog State (Add/Edit)
   const [openDialog, setOpenDialog] = useState(false);
@@ -100,10 +107,6 @@ export default function FundsPage() {
   // Detail View State
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedFund, setSelectedFund] = useState<FundItem | null>(null);
-  const [fundDetails, setFundDetails] = useState<any>(null);
-  const [navHistory, setNavHistory] = useState<NavPoint[]>([]);
-  const [loadingDetails, setLoadingDetails] = useState(false);
-  const [detailTab, setDetailTab] = useState(0);
 
   // Action Menu State
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
@@ -126,6 +129,12 @@ export default function FundsPage() {
   const [comparisonData, setComparisonData] = useState<FundComparisonResponse | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareTab, setCompareTab] = useState(0);
+
+  // Real-time Estimation State
+  const [estimations, setEstimations] = useState<Record<string, FundEstimation>>({});
+  const [estimationLoading, setEstimationLoading] = useState(false);
+  const [isTrading, setIsTrading] = useState(false);
+  const [lastEstimationUpdate, setLastEstimationUpdate] = useState<string | null>(null);
 
   // Toggle fund selection for comparison
   const handleToggleCompare = (code: string) => {
@@ -305,6 +314,50 @@ export default function FundsPage() {
     }
   };
 
+  // Load estimation data
+  const loadEstimations = async () => {
+    if (funds.length === 0) return;
+    
+    setEstimationLoading(true);
+    try {
+      const codes = funds.map(f => f.code);
+      const result = await fetchBatchEstimation(codes);
+      
+      // Build map by code for easy lookup
+      const estimationMap: Record<string, FundEstimation> = {};
+      result.estimations.forEach(est => {
+        estimationMap[est.code] = est;
+      });
+      
+      setEstimations(estimationMap);
+      setIsTrading(result.is_trading);
+      setLastEstimationUpdate(result.timestamp);
+    } catch (error) {
+      console.error('Failed to load estimations:', error);
+    } finally {
+      setEstimationLoading(false);
+    }
+  };
+
+  // Load estimations when funds change or when on "My Holdings" tab
+  useEffect(() => {
+    if (pageTab === 2 && funds.length > 0) {
+      loadEstimations();
+    }
+  }, [funds, pageTab]);
+
+  // Auto-refresh estimations during trading hours (every 60 seconds)
+  useEffect(() => {
+    if (pageTab !== 2 || funds.length === 0) return;
+    
+    // Set up interval for auto-refresh
+    const intervalId = setInterval(() => {
+      loadEstimations();
+    }, 60000); // 60 seconds
+    
+    return () => clearInterval(intervalId);
+  }, [pageTab, funds]);
+
   const handleDelete = async (code: string) => {
     if (window.confirm(t('funds.messages.delete_confirm'))) {
       try {
@@ -319,78 +372,13 @@ export default function FundsPage() {
   const handleViewDetails = async (fund: FundItem) => {
     setSelectedFund(fund);
     setDetailOpen(true);
-    setLoadingDetails(true);
-    setFundDetails(null);
-    setNavHistory([]);
 
     // Update context for AI assistant
     setCurrentFund({ code: fund.code, name: fund.name });
-
-    try {
-      const [details, nav] = await Promise.all([
-        fetchFundMarketDetails(fund.code),
-        fetchFundNavHistory(fund.code)
-      ]);
-      setFundDetails(details);
-      setNavHistory(nav);
-    } catch (error) {
-      console.error("Failed to load fund details", error);
-    } finally {
-      setLoadingDetails(false);
-    }
-  };
-
-  // Improved SVG Line Chart Renderer
-  const renderMiniChart = (data: NavPoint[]) => {
-    if (!data || data.length < 2) return null;
-    const values = data.map(d => d.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min;
-    const padding = 20;
-    const width = 800;
-    const height = 240;
-    
-    const points = data.map((d, i) => {
-      const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
-      const y = (height - padding) - ((d.value - min) / range) * (height - 2 * padding);
-      return `${x},${y}`;
-    }).join(' ');
-
-    return (
-      <Box sx={{ bgcolor: '#fcfcfc', p: 2, borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48 overflow-visible">
-          {/* Horizontal Grid Lines */}
-          {[0, 0.25, 0.5, 0.75, 1].map((v) => {
-              const y = (height - padding) - v * (height - 2 * padding);
-              const val = (min + v * range).toFixed(4);
-              return (
-                  <g key={v}>
-                      <line x1={padding} y1={y} x2={width-padding} y2={y} stroke="#e2e8f0" strokeDasharray="4 4" />
-                      <text x={0} y={y + 4} fontSize="10" fill="#94a3b8" fontFamily="JetBrains Mono">{val}</text>
-                  </g>
-              )
-          })}
-          <polyline
-            fill="none"
-            stroke="#6366f1"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            points={points}
-          />
-          {/* Shadow area */}
-          <path
-            d={`M${padding},${height-padding} L${points} L${width-padding},${height-padding} Z`}
-            fill="rgba(99, 102, 241, 0.08)"
-          />
-        </svg>
-      </Box>
-    );
   };
 
   return (
-    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -402,7 +390,7 @@ export default function FundsPage() {
           </Typography>
         </div>
         <Box sx={{ display: 'flex', gap: 1.5 }}>
-          {compareMode ? (
+          {pageTab === 2 && compareMode ? (
             <>
               <Button
                 variant="outlined"
@@ -436,7 +424,7 @@ export default function FundsPage() {
                 {t('funds.compare.compare_btn')} ({selectedForCompare.size}/10)
               </Button>
             </>
-          ) : (
+          ) : pageTab === 2 && (
             <>
               <Button
                 variant="outlined"
@@ -473,11 +461,143 @@ export default function FundsPage() {
         </Box>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-20">
-          <CircularProgress size={32} sx={{ color: '#6366f1' }} />
-        </div>
-      ) : (
+      {/* Page Tabs */}
+      <Paper 
+        elevation={0} 
+        sx={{ 
+          borderRadius: '12px', 
+          border: '1px solid #f1f5f9',
+          bgcolor: '#fafafa',
+        }}
+      >
+        <Tabs
+          value={pageTab}
+          onChange={(_, v) => setPageTab(v)}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{
+            '& .MuiTab-root': {
+              textTransform: 'none',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              minHeight: 56,
+              color: '#64748b',
+              '&.Mui-selected': {
+                color: '#6366f1',
+              },
+            },
+            '& .MuiTabs-indicator': {
+              backgroundColor: '#6366f1',
+              height: 3,
+              borderRadius: '3px 3px 0 0',
+            },
+          }}
+        >
+          <Tab 
+            icon={<DashboardIcon sx={{ fontSize: 20 }} />} 
+            iconPosition="start" 
+            label="市场概览" 
+          />
+          <Tab 
+            icon={<EmojiEventsIcon sx={{ fontSize: 20 }} />} 
+            iconPosition="start" 
+            label="基金排行" 
+          />
+          <Tab 
+            icon={<FolderIcon sx={{ fontSize: 20 }} />} 
+            iconPosition="start" 
+            label="我的持仓" 
+          />
+        </Tabs>
+      </Paper>
+
+      {/* Tab Content */}
+      {pageTab === 0 && (
+        <FundMarketOverview />
+      )}
+
+      {pageTab === 1 && (
+        <FundRankingTable 
+          initialFundType={selectedRankingType}
+          onFundClick={(code, name) => {
+            // Open fund details dialog
+            const fundItem: FundItem = { code, name, is_active: true };
+            handleViewDetails(fundItem);
+          }}
+        />
+      )}
+
+      {pageTab === 2 && (
+        <>
+          {loading ? (
+            <div className="flex justify-center py-20">
+              <CircularProgress size={32} sx={{ color: '#6366f1' }} />
+            </div>
+          ) : (
+        <>
+          {/* Estimation Status Bar */}
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            px: 2,
+            py: 1.5,
+            bgcolor: isTrading ? 'rgba(34, 197, 94, 0.05)' : '#f8fafc',
+            border: '1px solid',
+            borderColor: isTrading ? 'rgba(34, 197, 94, 0.2)' : '#e2e8f0',
+            borderRadius: '12px',
+            mb: 2,
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <TrendingUpIcon sx={{ color: isTrading ? '#22c55e' : '#94a3b8', fontSize: 20 }} />
+              <Typography sx={{ fontSize: '0.85rem', fontWeight: 700, color: isTrading ? '#16a34a' : '#64748b' }}>
+                {isTrading ? '盘中估值 · 实时更新' : '收盘估值 · 15:00数据'}
+              </Typography>
+              {isTrading && (
+                <Chip 
+                  label="LIVE" 
+                  size="small" 
+                  sx={{ 
+                    bgcolor: '#22c55e', 
+                    color: '#fff', 
+                    fontSize: '0.6rem', 
+                    fontWeight: 900,
+                    height: '18px',
+                    animation: 'pulse 2s infinite',
+                    '@keyframes pulse': {
+                      '0%, 100%': { opacity: 1 },
+                      '50%': { opacity: 0.7 },
+                    },
+                  }} 
+                />
+              )}
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {lastEstimationUpdate && (
+                <Typography sx={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'JetBrains Mono' }}>
+                  更新于 {new Date(lastEstimationUpdate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                </Typography>
+              )}
+              <IconButton 
+                size="small" 
+                onClick={loadEstimations}
+                disabled={estimationLoading}
+                sx={{ 
+                  color: '#64748b',
+                  '&:hover': { color: '#6366f1', bgcolor: 'rgba(99, 102, 241, 0.05)' },
+                }}
+              >
+                <RefreshIcon 
+                  fontSize="small" 
+                  sx={{ 
+                    animation: estimationLoading ? 'spin 1s linear infinite' : 'none',
+                    '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
+                  }} 
+                />
+              </IconButton>
+            </Box>
+          </Box>
+
         <TableContainer component={Paper} elevation={0} sx={{ borderRadius: '16px', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
           <Table sx={{ minWidth: 650 }}>
             <TableHead sx={{ bgcolor: '#f8fafc' }}>
@@ -500,8 +620,9 @@ export default function FundsPage() {
                   </TableCell>
                 )}
                 <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.fund_entity')}</TableCell>
+                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>估算净值</TableCell>
+                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>估算涨幅</TableCell>
                 <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.strategy')}</TableCell>
-                <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.sectors')}</TableCell>
                 <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.auto_schedule')}</TableCell>
                 <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.actions')}</TableCell>
               </TableRow>
@@ -542,6 +663,56 @@ export default function FundsPage() {
                       </Box>
                     </Box>
                   </TableCell>
+                  {/* Estimated NAV */}
+                  <TableCell align="right">
+                    {estimations[fund.code]?.not_available ? (
+                      <Typography sx={{ color: '#94a3b8', fontSize: '0.75rem' }}>--</Typography>
+                    ) : estimations[fund.code]?.estimated_nav ? (
+                      <Box>
+                        <Typography sx={{ 
+                          fontFamily: 'JetBrains Mono', 
+                          fontWeight: 800, 
+                          fontSize: '0.95rem',
+                          color: '#1e293b',
+                        }}>
+                          {estimations[fund.code].estimated_nav?.toFixed(4)}
+                        </Typography>
+                        <Typography sx={{ 
+                          fontSize: '0.65rem', 
+                          color: '#94a3b8',
+                          fontFamily: 'JetBrains Mono',
+                        }}>
+                          前值 {estimations[fund.code].prev_nav?.toFixed(4)}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>加载中...</Typography>
+                    )}
+                  </TableCell>
+                  {/* Estimated Change % */}
+                  <TableCell align="right">
+                    {estimations[fund.code]?.not_available ? (
+                      <Typography sx={{ color: '#94a3b8', fontSize: '0.75rem' }}>--</Typography>
+                    ) : estimations[fund.code]?.estimated_change_pct !== null && estimations[fund.code]?.estimated_change_pct !== undefined ? (
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                        <Typography sx={{ 
+                          fontFamily: 'JetBrains Mono', 
+                          fontWeight: 900, 
+                          fontSize: '1rem',
+                          color: (estimations[fund.code].estimated_change_pct ?? 0) > 0 
+                            ? '#ef4444' 
+                            : (estimations[fund.code].estimated_change_pct ?? 0) < 0 
+                              ? '#22c55e' 
+                              : '#64748b',
+                        }}>
+                          {(estimations[fund.code].estimated_change_pct ?? 0) > 0 ? '+' : ''}
+                          {estimations[fund.code].estimated_change_pct?.toFixed(2)}%
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>--</Typography>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Chip 
                       label={fund.style || 'Other'} 
@@ -556,13 +727,6 @@ export default function FundsPage() {
                         borderRadius: '6px'
                       }} 
                     />
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                        {fund.focus?.map((tag, i) => (
-                            <Chip key={i} label={tag} size="small" sx={{ fontSize: '0.6rem', height: '18px', bgcolor: '#f1f5f9', color: '#64748b' }} />
-                        ))}
-                    </Box>
                   </TableCell>
                   <TableCell>
                     {(!fund.pre_market_time && !fund.post_market_time) ? (
@@ -588,6 +752,9 @@ export default function FundsPage() {
             </TableBody>
           </Table>
         </TableContainer>
+        </>
+          )}
+        </>
       )}
 
       {/* Comparison Results Dialog */}
@@ -1060,243 +1227,13 @@ export default function FundsPage() {
         </DialogActions>
       </Dialog>
 
-      {/* Fund Details Dialog - Professional Financial Factsheet */}
-
-      {/* Fund Details Dialog - Professional Financial Factsheet */}
-      <Dialog 
-        open={detailOpen} 
-        onClose={() => setDetailOpen(false)} 
-        maxWidth="sm" 
-        fullWidth
-        scroll="paper"
-        PaperProps={{ 
-          sx: { 
-            borderRadius: '20px', 
-            bgcolor: '#ffffff', 
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-            height: '90vh',
-          } 
-        }}
-      >
-        {/* Header Section - Modern Ticker Style */}
-        <DialogTitle sx={{ p: 0 }}>
-          <Box sx={{ 
-            bgcolor: '#fcfcfc', 
-            p: 3.5, 
-            borderBottom: '1px solid #f1f5f9',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2
-          }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="h5" sx={{ fontWeight: 900, color: '#0f172a', letterSpacing: '-0.02em', mb: 1, lineHeight: 1.2 }}>
-                    {selectedFund?.name}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-                    <Box sx={{ px: 1, py: 0.25, bgcolor: '#6366f1', borderRadius: '4px' }}>
-                        <Typography sx={{ color: '#fff', fontWeight: 800, fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>
-                            {selectedFund?.code}
-                        </Typography>
-                    </Box>
-                    <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        {typeof fundDetails?.info?.type === 'string' ? fundDetails.info.type : 'Sector Strategy'}
-                    </Typography>
-                </Box>
-              </Box>
-              <Box sx={{ textAlign: 'right', minWidth: '120px' }}>
-                <Typography sx={{ color: '#6366f1', fontSize: '0.7rem', fontWeight: 900, mb: 0.5, letterSpacing: '0.1em' }}>{t('funds.details.latest_nav')}</Typography>
-                <Typography variant="h4" sx={{ color: '#0f172a', fontWeight: 900, fontFamily: 'JetBrains Mono', lineHeight: 1 }}>
-                    {fundDetails?.info?.nav && typeof fundDetails.info.nav !== 'object' && fundDetails.info.nav !== "---" 
-                      ? fundDetails.info.nav 
-                      : (navHistory.length > 0 ? navHistory[navHistory.length - 1].value.toFixed(4) : '---')}
-                </Typography>
-              </Box>
-            </Box>
-            
-            {/* Quick Metadata Grid */}
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-                 {[
-                   { label: t('funds.details.manager'), value: fundDetails?.info?.manager },
-                   { label: t('funds.details.fund_size'), value: fundDetails?.info?.size },
-                   { label: t('funds.details.morningstar'), value: fundDetails?.info?.rating },
-                 ].map((item, i) => (
-                   <Grid size={4} key={i}>
-                      <Typography sx={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: 800, mb: 0.5 }}>{item.label}</Typography>
-                      <Typography sx={{ color: '#334155', fontSize: '0.75rem', fontWeight: 700 }}>
-                        {item.value && typeof item.value !== 'object' ? item.value : '---'}
-                      </Typography>
-                   </Grid>
-                 ))}
-            </Grid>
-          </Box>
-        </DialogTitle>
-
-        <DialogContent sx={{ p: 0, bgcolor: '#ffffff' }}>
-          {loadingDetails ? (
-            <Box sx={{ py: 12, textAlign: 'center' }}>
-              <CircularProgress size={32} thickness={5} sx={{ color: '#6366f1', mb: 2 }} />
-              <Typography variant="body2" sx={{ color: '#64748b', fontWeight: 600 }}>Fetching Market Intelligence...</Typography>
-            </Box>
-          ) : fundDetails ? (
-            <Box sx={{ p: 3.5, display: 'flex', flexDirection: 'column', gap: 5 }}>
-              
-              {/* 1. Core Chart Section */}
-              <Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TrendingUpIcon sx={{ fontSize: 18, color: '#6366f1' }} /> {t('funds.details.performance_analytics')}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700 }}>{t('funds.details.last_100_days')}</Typography>
-                </Box>
-                <Box sx={{ p: 2.5, borderRadius: '16px', border: '1px solid #f1f5f9', bgcolor: '#fcfcfc', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
-                    {renderMiniChart(navHistory)}
-                </Box>
-              </Box>
-
-              {/* 2. Statistical Data Tabs */}
-              <Box>
-                <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'block' }}>
-                    {t('funds.details.historical_reference')}
-                </Typography>
-                <Tabs 
-                    value={detailTab} 
-                    onChange={(_, v) => setDetailTab(v)}
-                    sx={{
-                        minHeight: '40px',
-                        mb: 2.5,
-                        borderBottom: '1px solid #f1f5f9',
-                        '& .MuiTab-root': { py: 1, minHeight: '40px', textTransform: 'none', fontWeight: 800, fontSize: '0.85rem', color: '#94a3b8' },
-                        '& .Mui-selected': { color: '#6366f1 !important' },
-                        '& .MuiTabs-indicator': { bgcolor: '#6366f1', height: 3, borderRadius: '3px 3px 0 0' }
-                    }}
-                >
-                    <Tab label={t('funds.details.stats_tab')} />
-                    <Tab label={t('funds.details.nav_tab')} />
-                </Tabs>
-
-                {detailTab === 0 ? (
-                    <TableContainer sx={{ borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-                        <Table size="small">
-                            <TableHead sx={{ bgcolor: '#f8fafc' }}>
-                                <TableRow>
-                                    <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.timeframe')}</TableCell>
-                                    <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.return')}</TableCell>
-                                    <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.rank')}</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {fundDetails.performance.map((p: any, idx: number) => (
-                                    <TableRow key={idx} hover sx={{ '&:last-child td': { border: 0 } }}>
-                                        <TableCell sx={{ color: '#334155', fontWeight: 700, fontSize: '0.8rem' }}>{p['时间范围']}</TableCell>
-                                        <TableCell align="right" sx={{ 
-                                            fontWeight: 900, 
-                                            fontFamily: 'JetBrains Mono',
-                                            fontSize: '0.85rem',
-                                            color: (p['收益率'] === null || p['收益率'] === undefined) ? '#cbd5e1' : (parseFloat(p['收益率']) >= 0 ? '#ef4444' : '#22c55e')
-                                        }}>
-                                            {p['收益率'] !== null && p['收益率'] !== undefined ? `${p['收益率']}%` : '---'}
-                                        </TableCell>
-                                        <TableCell align="right" sx={{ color: '#94a3b8', fontSize: '0.7rem', fontWeight: 800 }}>{p['同类排名']}</TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                ) : (
-                    <TableContainer sx={{ borderRadius: '12px', border: '1px solid #f1f5f9', maxHeight: '320px' }}>
-                        <Table size="small" stickyHeader>
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell sx={{ bgcolor: '#f8fafc', color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.date')}</TableCell>
-                                    <TableCell align="right" sx={{ bgcolor: '#f8fafc', color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.adj_nav')}</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {[...navHistory].reverse().map((point, idx) => (
-                                    <TableRow key={idx} hover sx={{ '&:last-child td': { border: 0 } }}>
-                                        <TableCell sx={{ color: '#64748b', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>{point.date}</TableCell>
-                                        <TableCell align="right" sx={{ fontWeight: 800, color: '#0f172a', fontFamily: 'JetBrains Mono', fontSize: '0.85rem' }}>
-                                            {point.value !== null && point.value !== undefined ? point.value.toFixed(4) : '---'}
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                )}
-              </Box>
-
-              {/* 3. Strategic Holdings Section */}
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <PieChartIcon sx={{ fontSize: 18, color: '#6366f1' }} /> {t('funds.details.core_holdings')}
-                </Typography>
-                {fundDetails.portfolio && fundDetails.portfolio.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                        {fundDetails.portfolio.map((stock: any, idx: number) => (
-                            <Box key={idx} sx={{ 
-                                p: 1.5, 
-                                borderRadius: '12px', 
-                                border: '1px solid #f1f5f9',
-                                '&:hover': { bgcolor: '#f8fafc' },
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between'
-                            }}>
-                                <Box sx={{ flex: 1 }}>
-                                    <Typography sx={{ color: '#0f172a', fontWeight: 800, fontSize: '0.85rem' }}>{stock['股票名称']}</Typography>
-                                    <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem', fontFamily: 'JetBrains Mono' }}>{stock['股票代码']}</Typography>
-                                </Box>
-                                <Box sx={{ textAlign: 'right', width: '40%' }}>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1.5 }}>
-                                        <Typography sx={{ color: '#6366f1', fontWeight: 900, fontFamily: 'JetBrains Mono', fontSize: '0.85rem' }}>
-                                            {stock['占净值比例']}%
-                                        </Typography>
-                                        <Box sx={{ width: '60px', height: '6px', bgcolor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
-                                            <Box sx={{ width: `${stock['占净值比例']}%`, height: '100%', bgcolor: '#6366f1', borderRadius: '3px' }} />
-                                        </Box>
-                                    </Box>
-                                </Box>
-                            </Box>
-                        ))}
-                    </Box>
-                ) : (
-                    <Box sx={{ py: 6, textAlign: 'center', bgcolor: '#f8fafc', borderRadius: '16px', border: '1px dashed #e2e8f0' }}>
-                        <PieChartIcon sx={{ fontSize: 32, color: '#e2e8f0', mb: 1 }} />
-                        <Typography sx={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: 700 }}>{t('funds.details.no_portfolio')}</Typography>
-                    </Box>
-                )}
-              </Box>
-
-            </Box>
-          ) : (
-             <Box sx={{ py: 15, textAlign: 'center' }}>
-                 <Typography sx={{ color: '#94a3b8', fontWeight: 800 }}>VIBE_ALPHA: NODE_NOT_FOUND</Typography>
-             </Box>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 3, bgcolor: '#fcfcfc', borderTop: '1px solid #f1f5f9' }}>
-          <Button 
-            fullWidth
-            onClick={() => setDetailOpen(false)} 
-            variant="contained" 
-            sx={{ 
-                bgcolor: '#0f172a', 
-                color: '#ffffff',
-                py: 1.5,
-                borderRadius: '12px',
-                textTransform: 'none',
-                fontWeight: 800,
-                fontSize: '0.9rem',
-                boxShadow: 'none',
-                '&:hover': { bgcolor: '#1e293b', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }
-            }}
-          >
-            {t('funds.details.close')}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* Enhanced Fund Details Dialog */}
+      <FundDetailDialog
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        fundCode={selectedFund?.code || ''}
+        fundName={selectedFund?.name || ''}
+      />
     </Box>
   );
 }

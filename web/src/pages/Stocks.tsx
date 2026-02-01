@@ -59,10 +59,11 @@ import {
   searchMarketStocks,
   fetchStockDetails,
   fetchStockHistory,
-  analyzeStock
+  analyzeStock,
+  fetchMarketAIBrief
 } from '../api';
 
-import type { MarketStock, StockItem, StockDetails, NavPoint } from '../api';
+import type { MarketStock, StockItem, StockDetails, NavPoint, MarketAIBrief } from '../api';
 import { useAppContext } from '../contexts/AppContext';
 import { 
   FinancialTab, 
@@ -314,17 +315,93 @@ export default function StocksPage() {
     );
   };
 
+// --- Local Component: AI Brief Banner ---
+function AIBriefBanner() {
+  const { t } = useTranslation();
+  const theme = useTheme();
+  const [brief, setBrief] = useState<MarketAIBrief | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetchMarketAIBrief();
+        setBrief(res);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  if (loading) return null; // Or a skeleton
+  if (!brief) return null;
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 2,
+        borderRadius: 3,
+        bgcolor: alpha(theme.palette.primary.main, 0.03),
+        border: '1px dashed',
+        borderColor: alpha(theme.palette.primary.main, 0.2),
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 2,
+        mb: 1 
+      }}
+    >
+      <AutoAwesomeIcon sx={{ color: 'primary.main', fontSize: 20, mt: 0.3 }} />
+      <Box>
+        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'primary.main', mb: 0.5 }}>
+          {t('stocks.market.ai_brief_title')}
+        </Typography>
+        <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.6 }}>
+          {brief.brief}
+        </Typography>
+        {brief.top_industries && brief.top_industries.length > 0 && (
+          <Box sx={{ mt: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            {brief.top_industries.map((ind, idx) => (
+              <Chip
+                key={idx}
+                label={`${ind.name}`}
+                size="small"
+                sx={{
+                  height: 20,
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  bgcolor: alpha('#ef4444', 0.08),
+                  color: '#ef4444',
+                  border: '1px solid',
+                  borderColor: alpha('#ef4444', 0.2),
+                }}
+              />
+            ))}
+          </Box>
+        )}
+      </Box>
+    </Paper>
+  );
+}
+
   return (
     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3, pb: 4 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 800, color: 'text.primary', fontFamily: 'JetBrains Mono', letterSpacing: '-0.02em' }}>
-            {t('stocks.title')}
-          </Typography>
-          <Typography variant="subtitle1" sx={{ color: 'text.secondary', mt: 0.5, fontWeight: 500 }}>
-            {t('stocks.subtitle')}
-          </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 800, color: 'text.primary', fontFamily: 'JetBrains Mono', letterSpacing: '-0.02em' }}>
+              {t('stocks.title')}
+            </Typography>
+            <Typography variant="subtitle1" sx={{ color: 'text.secondary', mt: 0.5, fontWeight: 500 }}>
+              {t('stocks.subtitle')}
+            </Typography>
+          </Box>
+          {/* Market Pulse Micro-Widget */}
+          <MarketPulseCard />
         </Box>
         <Button
           variant="contained"
@@ -346,11 +423,13 @@ export default function StocksPage() {
         </Button>
       </Box>
 
-      {/* Market Overview Section */}
-      <MarketPulseCard />
+      {/* AI Brief Banner (New) */}
+      <AIBriefBanner />
 
       {/* Market Discovery Section */}
       <Grid container spacing={3}>
+        {/* ... existing Grid content ... */}
+
         <Grid size={{ xs: 12, md: 4 }}>
           <HotStocksList 
             onStockClick={(code, name) => handleViewDetails({ code, name, is_active: true })} 

@@ -30,6 +30,19 @@ from src.data_sources.rate_limiter import rate_limiter
 from src.data_sources.circuit_breaker import circuit_breaker
 from src.data_sources.sector_mappings import get_concept_code, get_ths_code
 
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility shims
+# ---------------------------------------------------------------------------
+
+def _get_tushare_pro():
+    """Return a TuShare Pro client.
+
+    Some API routers historically imported `_get_tushare_pro` from this module.
+    The canonical implementation lives in `src.data_sources.tushare_client`.
+    """
+    return tushare_client._get_tushare_pro()
+
 # Simple in-memory cache
 _cache = {}
 _cache_timestamps = {}

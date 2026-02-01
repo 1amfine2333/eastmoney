@@ -165,6 +165,29 @@ export default function AIDiagnosisCard({ code, stockName, onClose }: AIDiagnosi
     );
   }
 
+  if (!data.diagnosis) {
+    return (
+      <Paper elevation={0} sx={{
+        p: 4,
+        borderRadius: '16px',
+        border: '1px solid #fecaca',
+        bgcolor: '#fef2f2',
+        textAlign: 'center'
+      }}>
+        <Typography color="error" sx={{ fontWeight: 600 }}>
+          {t('stocks.ai.no_data')}
+        </Typography>
+        <Button
+          startIcon={<RefreshIcon />}
+          onClick={loadDiagnosis}
+          sx={{ mt: 2, color: '#ef4444' }}
+        >
+          {t('common.refresh')}
+        </Button>
+      </Paper>
+    );
+  }
+
   const { diagnosis } = data;
 
   return (

@@ -241,7 +241,7 @@ export default function QuantTab({ code }: QuantTabProps) {
   };
 
   // Prepare MACD chart data
-  const macdData = data.factors.slice().reverse().slice(-20).map(f => ({
+  const macdData = (data.factors ?? []).slice().reverse().slice(-20).map(f => ({
     date: f.trade_date?.substring(4) || '',
     macd: f.macd || 0
   }));

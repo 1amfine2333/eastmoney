@@ -280,11 +280,19 @@ async def get_hot_stocks_endpoint(limit: int = 20):
     获取热门股票排行榜
     """
     try:
+        cache_key = f"hot_stocks_{limit}"
+        cached = stock_feature_cache.get(cache_key, ttl_minutes=10)
+        if cached:
+            return cached
+
         result = await asyncio.to_thread(get_hot_stocks, limit)
-        return {
+        response = {
             "items": result,
             "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
+
+        stock_feature_cache.set(cache_key, response)
+        return response
     except Exception as e:
         print(f"Error fetching hot stocks: {e}")
         import traceback
@@ -616,15 +624,71 @@ async def get_stock_quantitative_indicators(code: str, current_user: User = Depe
 
         loop = asyncio.get_running_loop()
 
-        df = await loop.run_in_executor(
-            None,
-            lambda: ak.stock_zh_a_hist(symbol=code, period="daily", start_date=(datetime.now() - timedelta(days=365)).strftime('%Y%m%d'), adjust="qfq")
-        )
+        start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
+        end_date = datetime.now().strftime('%Y%m%d')
+
+        def fetch_hist_df() -> pd.DataFrame:
+            """Prefer TuShare daily + adj_factor (qfq), fall back to AkShare if needed."""
+            # 1) Try TuShare
+            try:
+                pro = _get_tushare_pro()
+                ts_code = f"{code}.SH" if code.startswith('6') else f"{code}.SZ"
+
+                daily_df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                if daily_df is not None and not daily_df.empty:
+                    # TuShare returns newest first; sort ascending for rolling calculations
+                    daily_df = daily_df.sort_values('trade_date', ascending=True)
+
+                    # Try qfq adjustment using adj_factor
+                    try:
+                        adj_df = pro.adj_factor(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                        if adj_df is not None and not adj_df.empty and 'adj_factor' in adj_df.columns:
+                            adj_df = adj_df.sort_values('trade_date', ascending=True)
+                            latest_adj = float(adj_df.iloc[-1]['adj_factor'])
+                            merged = daily_df.merge(
+                                adj_df[['trade_date', 'adj_factor']],
+                                on='trade_date',
+                                how='left'
+                            )
+                            merged['adj_factor'] = pd.to_numeric(merged['adj_factor'], errors='coerce')
+                            merged['close'] = pd.to_numeric(merged['close'], errors='coerce')
+                            if latest_adj and latest_adj > 0:
+                                merged['close_qfq'] = merged['close'] * merged['adj_factor'] / latest_adj
+                            else:
+                                merged['close_qfq'] = merged['close']
+                            close_series = merged['close_qfq']
+                        else:
+                            close_series = pd.to_numeric(daily_df['close'], errors='coerce')
+                    except Exception:
+                        close_series = pd.to_numeric(daily_df['close'], errors='coerce')
+
+                    # Normalize to AkShare-like columns for downstream calculations
+                    out = pd.DataFrame({
+                        '日期': daily_df['trade_date'].astype(str),
+                        '收盘': close_series
+                    })
+                    out = out.dropna(subset=['收盘'])
+                    return out
+            except Exception:
+                pass
+
+            # 2) Fall back to AkShare (may hit EastMoney network/proxy issues)
+            return ak.stock_zh_a_hist(
+                symbol=code,
+                period="daily",
+                start_date=start_date,
+                adjust="qfq"
+            )
+
+        df = await loop.run_in_executor(None, fetch_hist_df)
 
         if df is None or df.empty or len(df) < 30:
             return {"message": "Insufficient data for quantitative analysis"}
 
         # Calculate indicators
+        if '收盘' not in df.columns:
+            return {"message": "Insufficient data for quantitative analysis"}
+
         df['MA5'] = df['收盘'].rolling(window=5).mean()
         df['MA20'] = df['收盘'].rolling(window=20).mean()
         df['MA60'] = df['收盘'].rolling(window=60).mean()
@@ -701,12 +765,17 @@ async def get_stock_ai_diagnosis(
             if cached:
                 return cached
 
-        # Gather all data in parallel
+        # Gather data in parallel, but don't fail the whole endpoint if one data source is down
         financial_task = get_stock_financial_summary(code, current_user)
         quant_task = get_stock_quantitative_indicators(code, current_user)
+        financial_result, quant_result = await asyncio.gather(
+            financial_task,
+            quant_task,
+            return_exceptions=True
+        )
 
-        financial_data = await financial_task
-        quant_data = await quant_task
+        financial_data = None if isinstance(financial_result, Exception) else financial_result
+        quant_data = None if isinstance(quant_result, Exception) else quant_result
 
         # Get basic quote
         quote = await asyncio.to_thread(get_stock_realtime_quote, code)
@@ -714,12 +783,63 @@ async def get_stock_ai_diagnosis(
         # Calculate 5-dimension scores
         scores = _calculate_stock_diagnosis_scores(quote, financial_data, quant_data)
 
+        # If quant failed, add a gentle note (common when external data source is unreachable)
+        if quant_data is None:
+            scores['recommendations'].append("技术面数据获取失败（网络/代理问题），本次评分偏保守")
+
+        total_score = int(scores.get('total', 0))
+        grade = _get_grade(total_score)
+        if total_score >= 80:
+            recommendation = "建议买入"
+            action_advice = "可分批布局，设好止损线。"
+            key_focus = "关注趋势延续与量能变化"
+        elif total_score >= 60:
+            recommendation = "建议持有"
+            action_advice = "以持有为主，回撤加仓需谨慎。"
+            key_focus = "关注业绩兑现与估值变化"
+        elif total_score >= 40:
+            recommendation = "建议观望"
+            action_advice = "等待信号更明确后再介入。"
+            key_focus = "关注拐点信号与风险事件"
+        else:
+            recommendation = "建议减持"
+            action_advice = "控制仓位，避免逆势加仓。"
+            key_focus = "关注止损纪律与基本面风险"
+
+        highlights: List[str] = []
+        risks: List[str] = []
+        if scores.get('fundamental', 0) >= 15:
+            highlights.append("基本面相对稳健")
+        if scores.get('technical', 0) >= 15:
+            highlights.append("技术面偏强")
+        if scores.get('momentum', 0) >= 15:
+            highlights.append("动量较强")
+        if not highlights:
+            highlights.append("暂无明显强势信号")
+
+        # Reuse recommendations as risks when they look like warnings
+        for rec in scores.get('recommendations', []):
+            if any(k in rec for k in ["风险", "偏高", "偏低", "谨慎", "走势偏弱", "失败"]):
+                risks.append(rec)
+        if not risks and total_score < 60:
+            risks.append("综合评分一般，注意回撤风险")
+
+        # Match frontend `DiagnosisResponse` schema
         result = {
             "code": code,
             "name": quote.get('name', code) if quote else code,
-            "total_score": scores['total'],
-            "max_score": 100,
-            "grade": _get_grade(scores['total']),
+            "diagnosis": {
+                "score": total_score,
+                "rating": grade,
+                "recommendation": recommendation,
+                "highlights": highlights,
+                "risks": risks,
+                "action_advice": action_advice,
+                "key_focus": key_focus,
+            },
+            "data_timestamp": datetime.now().isoformat(),
+
+            # Extra fields for future UI use (harmless for current frontend)
             "dimensions": [
                 {"name": "基本面", "score": scores['fundamental'], "max": 20},
                 {"name": "技术面", "score": scores['technical'], "max": 20},
@@ -727,8 +847,6 @@ async def get_stock_ai_diagnosis(
                 {"name": "估值", "score": scores['valuation'], "max": 20},
                 {"name": "动量", "score": scores['momentum'], "max": 20},
             ],
-            "recommendations": scores['recommendations'],
-            "analyzed_at": datetime.now().isoformat(),
         }
 
         stock_feature_cache.set(cache_key, result)
@@ -1382,4 +1500,81 @@ async def get_stock_quant(code: str, current_user: User = Depends(get_current_us
 
     except Exception as e:
         print(f"Error fetching quant data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{code}/quant/ai-interpret")
+async def get_quant_ai_interpretation(code: str, current_user: User = Depends(get_current_user)):
+    """
+    AI Technical Signal Interpretation - Convert quantitative signals to actionable advice.
+
+    Cache TTL: 15 minutes
+    """
+    cache_key = f"ai_quant_interpret:{code}"
+    cached = stock_feature_cache.get(cache_key, 15)  # 15 minutes
+    if cached:
+        return cached
+
+    try:
+        from src.llm.client import get_llm_client
+        from src.llm.stock_diagnosis_prompt import build_quant_interpretation_prompt
+        import json
+        import re
+
+        # Get quant data
+        quant_data = await get_stock_quant(code, current_user)
+
+        # Get current price
+        quote = get_stock_realtime_quote(code)
+        current_price = None
+        if quote:
+            current_price = quote.get("最新价")
+
+        # Build prompt
+        prompt = build_quant_interpretation_prompt(
+            stock_code=code,
+            current_price=current_price,
+            quant=quant_data
+        )
+
+        # Call LLM
+        llm = get_llm_client()
+        system_prompt = "你是一位专业的技术分析师，擅长解读各类技术指标并给出通俗易懂的操作建议。请用中文回答。"
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        response_text = llm.generate_content(full_prompt)
+
+        # Parse JSON response
+        interpretation = None
+        try:
+            interpretation = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try to find JSON block
+            json_match = re.search(r'\{[^{}]*"pattern"[^{}]*\}', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    interpretation = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        if not interpretation:
+            # Create default if parsing failed
+            interpretation = {
+                "pattern": "分析中...",
+                "interpretation": "AI正在分析技术指标，请稍后重试。",
+                "action": "建议等待AI分析完成后再做决策。"
+            }
+
+        result = {
+            "code": code,
+            "interpretation": interpretation,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        stock_feature_cache.set(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error generating AI quant interpretation for {code}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

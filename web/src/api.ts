@@ -227,6 +227,300 @@ export const fetchFundNavHistory = async (code: string): Promise<NavPoint[]> => 
     return response.data;
 };
 
+// ==================== Fund Market Enhanced APIs ====================
+
+export interface FundCategoryStats {
+  category: string;
+  type_key: string;
+  total_count: number;
+  avg_return_1m: number;
+  avg_return_3m: number;
+  avg_return_1y: number;
+  top_performers: {
+    code: string;
+    name: string;
+    return_1m: number;
+  }[];
+}
+
+export interface FundMarketOverview {
+  timestamp: string;
+  categories: FundCategoryStats[];
+}
+
+export const fetchFundMarketOverview = async (): Promise<FundMarketOverview> => {
+  const response = await api.get('/funds/market/overview');
+  return response.data;
+};
+
+export interface FundRankingItem {
+  rank: number;
+  code: string;
+  name: string;
+  nav: number;
+  acc_nav: number;
+  return_1w: number;
+  return_1m: number;
+  return_3m: number;
+  return_6m: number;
+  return_1y: number;
+  return_3y: number;
+  fee: string;
+}
+
+export interface FundRankingResponse {
+  fund_type: string;
+  sort_by: string;
+  funds: FundRankingItem[];
+  total: number;
+}
+
+export const fetchFundRanking = async (
+  fundType: string = '股票型',
+  sortBy: string = '近1月',
+  limit: number = 50
+): Promise<FundRankingResponse> => {
+  const response = await api.get('/funds/market/ranking', {
+    params: { fund_type: fundType, sort_by: sortBy, limit },
+  });
+  return response.data;
+};
+
+export interface ETFRealtimeItem {
+  code: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  change_val: number;
+  volume: number;
+  amount: number;
+  open: number;
+  high: number;
+  low: number;
+  prev_close: number;
+  turnover_rate: number;
+}
+
+export interface ETFRealtimeResponse {
+  etfs: ETFRealtimeItem[];
+  timestamp: string;
+}
+
+export const fetchETFRealtime = async (limit: number = 50): Promise<ETFRealtimeResponse> => {
+  const response = await api.get('/funds/etf/realtime', { params: { limit } });
+  return response.data;
+};
+
+export interface FundEstimation {
+  code: string;
+  name: string;
+  estimated_nav: number;
+  estimated_change_pct: number;
+  prev_nav: number;
+  prev_nav_date: string;
+  estimation_time: string;
+  timestamp: string;
+}
+
+export const fetchFundEstimation = async (code: string): Promise<FundEstimation> => {
+  const response = await api.get(`/funds/${code}/estimation`);
+  return response.data;
+};
+
+export interface IndustryAllocation {
+  industry: string;
+  weight: number;
+  market_value: number;
+}
+
+export interface FundIndustryAllocationResponse {
+  code: string;
+  allocations: IndustryAllocation[];
+  report_date: string | null;
+  message?: string;
+}
+
+export const fetchFundIndustryAllocation = async (code: string): Promise<FundIndustryAllocationResponse> => {
+  const response = await api.get(`/funds/${code}/industry-allocation`);
+  return response.data;
+};
+
+export interface FundManager {
+  name: string;
+  start_date: string;
+  end_date: string;
+  tenure_days: number;
+  tenure_return: number;
+  best_return?: number;
+  education?: string;
+  gender?: string;
+  birth_year?: string;
+  resume?: string;
+}
+
+export interface FundManagerDetailResponse {
+  code: string;
+  fund_name: string;
+  managers: FundManager[];
+  company: string;
+}
+
+export const fetchFundManagerDetail = async (code: string): Promise<FundManagerDetailResponse> => {
+  const response = await api.get(`/funds/${code}/manager-detail`);
+  return response.data;
+};
+
+// ==================== Market Overview APIs ====================
+
+export interface MarketIndex {
+  code: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  change_val: number;
+  volume: number;
+  amount: number;
+  high: number;
+  low: number;
+  open: number;
+  prev_close: number;
+}
+
+export interface MarketIndicesResponse {
+  indices: MarketIndex[];
+  timestamp: string;
+}
+
+export const fetchMarketIndicesData = async (): Promise<MarketIndicesResponse> => {
+  const response = await api.get('/funds/market/indices');
+  return response.data;
+};
+
+export interface SectorItem {
+  name: string;
+  change_pct: number;
+  turnover_rate: number;
+  leading_stock: string;
+  leading_change: number;
+  total_amount: number;
+}
+
+export interface MarketSectorsResponse {
+  top_gainers: SectorItem[];
+  top_losers: SectorItem[];
+  timestamp: string;
+}
+
+export const fetchMarketSectors = async (limit: number = 10): Promise<MarketSectorsResponse> => {
+  const response = await api.get('/funds/market/sectors', { params: { limit } });
+  return response.data;
+};
+
+export interface NorthboundFlowItem {
+  date: string;
+  north_money: number;
+  south_money: number;
+  hgt: number;
+  sgt: number;
+}
+
+export interface NorthboundFlowResponse {
+  today: {
+    north_money: number;
+    south_money: number;
+    hgt: number;
+    sgt: number;
+  };
+  recent: NorthboundFlowItem[];
+  timestamp: string;
+  message?: string;
+}
+
+export const fetchNorthboundFlow = async (): Promise<NorthboundFlowResponse> => {
+  const response = await api.get('/funds/market/northbound');
+  return response.data;
+};
+
+export interface MarketSentiment {
+  up_count: number;
+  down_count: number;
+  flat_count: number;
+  limit_up: number;
+  limit_down: number;
+  timestamp: string;
+}
+
+export const fetchMarketSentiment = async (): Promise<MarketSentiment> => {
+  const response = await api.get('/funds/market/sentiment');
+  return response.data;
+};
+
+// ==================== Enhanced Fund Detail API ====================
+
+export interface FundFullDetail {
+  code: string;
+  basic_info: {
+    name: string;
+    company: string;
+    fund_type: string;
+    inception_date: string;
+    size: string;
+  };
+  nav: {
+    current: number;
+    accumulated: number;
+    history: { date: string; value: number }[];
+  };
+  performance: {
+    return_1w?: number;
+    return_1m?: number;
+    return_3m?: number;
+    return_6m?: number;
+    return_1y?: number;
+    return_2y?: number;
+    return_3y?: number;
+    return_ytd?: number;
+    return_since_inception?: number;
+    fee?: string;
+  };
+  risk_metrics: {
+    max_drawdown?: number;
+    sharpe_ratio?: number;
+    volatility?: number;
+    annualized_return?: number;
+    calmar_ratio?: number;
+    sortino_ratio?: number;
+  };
+  holdings: {
+    code: string;
+    name: string;
+    weight: number;
+  }[];
+  industry_allocation: {
+    industry: string;
+    weight: number;
+  }[];
+  managers: {
+    name: string;
+    start_date: string;
+    end_date: string;
+    tenure_days: number;
+    tenure_return: number;
+    education?: string;
+    gender?: string;
+    birth_year?: string;
+    resume?: string;
+  }[];
+  timestamp: string;
+}
+
+export const fetchFundFullDetail = async (code: string): Promise<FundFullDetail> => {
+  const response = await api.get(`/funds/${code}/full-detail`);
+  return response.data;
+};
+
+// ==================== End Fund Market Enhanced APIs ====================
+
 export const fetchSettings = async (): Promise<SettingsData> => {
   const response = await api.get('/settings');
   return response.data;
@@ -1532,7 +1826,7 @@ export interface CommonStock {
     count: number;
 }
 
-export interface FundRankingItem {
+export interface FundComparisonRankingItem {
     code: string;
     name: string;
     rank: number;
@@ -1566,7 +1860,7 @@ export interface FundComparisonResponse {
         message?: string;
     };
     ranking: {
-        ranking: FundRankingItem[];
+        ranking: FundComparisonRankingItem[];
         methodology: string;
     };
     computed_at: string;
@@ -1574,6 +1868,37 @@ export interface FundComparisonResponse {
 
 export const compareFundsAdvanced = async (codes: string[]): Promise<FundComparisonResponse> => {
     const response = await api.post('/funds/compare', { codes });
+    return response.data;
+};
+
+
+// ==================== Fund Batch Estimation API ====================
+
+export interface FundEstimation {
+    code: string;
+    name: string | null;
+    estimated_nav: number | null;
+    estimated_change_pct: number | null;
+    prev_nav: number | null;
+    prev_nav_date: string | null;
+    estimation_time: string | null;
+    not_available?: boolean;
+}
+
+export interface BatchEstimationResponse {
+    estimations: FundEstimation[];
+    is_trading: boolean;
+    cache_ttl: number;
+    timestamp: string;
+}
+
+/**
+ * Fetch batch fund estimations for multiple funds.
+ * @param codes Optional array of fund codes. If empty, returns estimations for all user's funds.
+ */
+export const fetchBatchEstimation = async (codes?: string[]): Promise<BatchEstimationResponse> => {
+    const params = codes && codes.length > 0 ? { codes: codes.join(',') } : {};
+    const response = await api.get('/funds/batch-estimation', { params });
     return response.data;
 };
 
