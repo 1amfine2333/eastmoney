@@ -17,6 +17,9 @@ class YFinanceAPI:
         'GOLD_FUTURES': 'GC=F',
         'SILVER_FUTURES': 'SI=F',
         'US_10Y_YIELD': '^TNX',
+        'US_5Y_YIELD': '^FVX',
+        'US_3M_YIELD': '^IRX',
+        'US_30Y_YIELD': '^TYX',
         'DOLLAR_INDEX': 'DX-Y.NYB',
         'GOLD_ETF': 'GLD',
         'SILVER_ETF': 'SLV',
@@ -60,20 +63,50 @@ class YFinanceAPI:
     @classmethod
     def get_macro_data(cls) -> Dict[str, float]:
         """
-        Get current macro indicators: US 10Y Yield, DXY.
+        Get current macro indicators: US yields, DXY, S&P 500.
         """
         data = {}
         try:
             # Fetch multiple tickers at once for latest quote
-            tickers = [cls.TICKERS['US_10Y_YIELD'], cls.TICKERS['DOLLAR_INDEX']]
+            tickers = [
+                cls.TICKERS['US_10Y_YIELD'],
+                cls.TICKERS['US_5Y_YIELD'],
+                cls.TICKERS['US_3M_YIELD'],
+                cls.TICKERS['US_30Y_YIELD'],
+                cls.TICKERS['DOLLAR_INDEX'],
+                cls.TICKERS['SP500'],
+            ]
             df = yf.download(tickers, period="1d", progress=False)['Close']
             
-            if not df.empty:
+            latest_dates = []
+            if df is not None and not df.empty:
                 # Handle multi-index columns if necessary (newer yfinance versions)
                 # If only one row, it might be a Series or DataFrame
                 last_row = df.iloc[-1]
-                data['US_10Y_YIELD'] = float(last_row.get(cls.TICKERS['US_10Y_YIELD'], 0))
-                data['DOLLAR_INDEX'] = float(last_row.get(cls.TICKERS['DOLLAR_INDEX'], 0))
+                latest_dates.append(df.index[-1].date())
+
+                def _pick_or_fallback(symbol: str) -> float:
+                    val = last_row.get(symbol)
+                    if val is not None and pd.notna(val):
+                        return float(val)
+                    try:
+                        t = yf.Ticker(symbol)
+                        d = t.history(period="5d")
+                        if d is not None and not d.empty:
+                            latest_dates.append(d.index[-1].date())
+                            return float(d['Close'].iloc[-1])
+                    except Exception:
+                        pass
+                    return 0.0
+
+                data['US_10Y_YIELD'] = _pick_or_fallback(cls.TICKERS['US_10Y_YIELD'])
+                data['US_5Y_YIELD'] = _pick_or_fallback(cls.TICKERS['US_5Y_YIELD'])
+                data['US_3M_YIELD'] = _pick_or_fallback(cls.TICKERS['US_3M_YIELD'])
+                data['US_30Y_YIELD'] = _pick_or_fallback(cls.TICKERS['US_30Y_YIELD'])
+                data['DOLLAR_INDEX'] = _pick_or_fallback(cls.TICKERS['DOLLAR_INDEX'])
+                data['SP500'] = _pick_or_fallback(cls.TICKERS['SP500'])
+                if latest_dates:
+                    data['DATE'] = max(latest_dates).strftime('%Y-%m-%d')
         except Exception as e:
             print(f"Error fetching macro data: {e}")
             

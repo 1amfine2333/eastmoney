@@ -771,7 +771,7 @@ export default function PortfolioPage() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <CircularProgress size={16} />
                         <Typography variant="caption" color="text.secondary">
-                          {t('portfolio.generatingExplanation', 'AI 正在分析...')}
+                          {t('portfolio.generatingRelatedExplanation', 'AI 正在分析持仓相关性分析...')}
                         </Typography>
                       </Box>
                     ) : correlationExplanation ? (

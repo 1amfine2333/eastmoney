@@ -92,18 +92,18 @@ def get_market_indices():
     if cached:
         return cached
 
-    # Try TuShare first
-    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
-        try:
-            from src.data_sources.data_source_manager import get_market_indices_from_tushare
-            results = get_market_indices_from_tushare()
+    # # Try TuShare first
+    # if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+    #     try:
+    #         from src.data_sources.data_source_manager import get_market_indices_from_tushare
+    #         results = get_market_indices_from_tushare()
 
-            if results:
-                data = sanitize_data(results)
-                indices_cache.set(data, ttl_seconds=60)
-                return data
-        except Exception as e:
-            print(f"TuShare indices failed: {e}")
+    #         if results:
+    #             data = sanitize_data(results)
+    #             indices_cache.set(data, ttl_seconds=60)
+    #             return data
+    #     except Exception as e:
+    #         print(f"TuShare indices failed: {e}")
 
     # Fallback to AkShare
     try:

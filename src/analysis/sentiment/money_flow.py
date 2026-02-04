@@ -127,93 +127,42 @@ class MoneyFlowAnalyst:
         except Exception as e:
             print(f"ETF data error: {e}")
 
-        # 4. 北向资金 (Time-based Strategy)
+        # 4. ???? (TuShare, previous trading day)
         try:
-            current_hour = datetime.now().hour
-            use_hist = current_hour >= 15 # After 15:00 use Hist, else Min
-            
-            df_north_min = None
-            hist_df = None
-            
-            # Helper to parse Hist
-            def parse_hist(df):
-                if df is None or df.empty: return None, None
-                if "日期" in df.columns:
-                    df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
-                    flow_col = next((c for c in ["当日成交净买额", "当日资金流入", "资金流入", "当日净流入"] if c in df.columns), None)
-                    if flow_col:
-                        df[flow_col] = pd.to_numeric(df[flow_col], errors="coerce")
-                        last = df.sort_values("日期").iloc[-1]
-                        val = float(last.get(flow_col))
-                        return round(val / 1e8 if abs(val) > 10000 else val, 2), last.get("日期").strftime("%Y-%m-%d")
-                return None, None
+            from src.data_sources import tushare_client
 
-            # Helper to parse Min
-            def parse_min(df):
-                if df is None or df.empty: return None, None
-                north_col = next((c for c in df.columns if "北向" in c), None)
-                last_val = 0.0
-                if north_col:
-                    last_val = pd.to_numeric(df.iloc[-1][north_col], errors='coerce')
-                else:
-                    sh_col = next((c for c in df.columns if "沪" in c), None)
-                    sz_col = next((c for c in df.columns if "深" in c), None)
-                    if sh_col and sz_col:
-                        v1 = pd.to_numeric(df.iloc[-1][sh_col], errors='coerce')
-                        v2 = pd.to_numeric(df.iloc[-1][sz_col], errors='coerce')
-                        last_val = (v1 if not pd.isna(v1) else 0) + (v2 if not pd.isna(v2) else 0)
-                
-                # Assume 0.0 might be invalid if mid-day, but valid if really 0.
-                # Unit check
-                val = round(last_val / 1e8 if abs(last_val) > 10000 else last_val, 2)
-                
-                date_col = next((c for c in df.columns if "日期" in c or "date" in c.lower()), None)
-                d_str = str(df.iloc[-1][date_col]) if date_col else datetime.now().strftime("%Y-%m-%d")
-                return val, d_str
+            trade_date = tushare_client.get_latest_trade_date(max_days_back=20)
+            if trade_date:
+                end_date = trade_date
+                start_dt = datetime.strptime(trade_date, '%Y%m%d') - timedelta(days=10)
+                start_date = start_dt.strftime('%Y%m%d')
 
-            # Strategy Execution
-            if not use_hist:
-                # < 15:00: Try Min First
-                try:
-                    df_north_min = ak.stock_hsgt_fund_min_em(symbol="北向资金")
-                except: pass
-                
-                val, d_str = parse_min(df_north_min)
-                if val is not None:
-                    data["north_money"] = val
-                    data["north_date"] = d_str
-                else:
-                    # Fallback to Hist
-                    try:
-                        hist_df = ak.stock_hsgt_hist_em(symbol="北向资金")
-                    except: pass
-                    val, d_str = parse_hist(hist_df)
-                    if val is not None:
-                        data["north_money"] = val
-                        data["north_date"] = d_str
+                df_north = tushare_client.get_moneyflow_hsgt(
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                if df_north is not None and not df_north.empty:
+                    df_north = df_north.sort_values('trade_date', ascending=False)
+                    latest = df_north.iloc[0]
+
+                    def _to_yi(val) -> float:
+                        try:
+                            v = pd.to_numeric(val, errors='coerce')
+                            if pd.isna(v):
+                                return 0.0
+                            # TuShare moneyflow_hsgt is in million (??), convert to ?
+                            return round(float(v) / 100, 2)
+                        except Exception:
+                            return 0.0
+
+                    data["north_money"] = _to_yi(latest.get('north_money'))
+                    data["north_date"] = str(latest.get('trade_date'))
             else:
-                # >= 15:00: Try Hist First
-                try:
-                    hist_df = ak.stock_hsgt_hist_em(symbol="北向资金")
-                except: pass
-                
-                val, d_str = parse_hist(hist_df)
-                if val is not None:
-                    data["north_money"] = val
-                    data["north_date"] = d_str
-                else:
-                    # Fallback to Min
-                    try:
-                        df_north_min = ak.stock_hsgt_fund_min_em(symbol="北向资金")
-                    except: pass
-                    val, d_str = parse_min(df_north_min)
-                    if val is not None:
-                        data["north_money"] = val
-                        data["north_date"] = d_str
+                print("North money error: could not determine latest trade date")
 
         except Exception as e:
             print(f"North money error: {e}")
-
         # 5. 机构龙虎榜 (现有逻辑，保留)
         try:
             df_jg = ak.stock_lhb_jgmmtj_em()

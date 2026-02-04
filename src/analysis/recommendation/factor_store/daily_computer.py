@@ -532,7 +532,7 @@ def run_daily_computation():
     print(f"Fund factors: {fund_result}")
 
     # Cleanup old data
-    cleanup_result = daily_computer.cleanup_old_data(days_to_keep=30)
+    cleanup_result = daily_computer.cleanup_old_data(days_to_keep=3)
     print(f"Cleanup: {cleanup_result}")
 
     print(f"[{datetime.now()}] Daily factor computation completed")
