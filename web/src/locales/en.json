@@ -541,6 +541,7 @@
     "topDetractors": "Top Detractors",
     "generateExplanation": "Generate Analysis",
     "generatingExplanation": "AI is analyzing your returns...",
+    "generatingRelatedExplanation":"AI is analyzing position correlation...",
     "clickToGenerate": "Click \"Generate Analysis\" to let AI analyze your daily returns",
     "aiExplanationHint": "AI will analyze key contributors and detractors, and provide brief suggestions",
     "regenerate": "Regenerate",

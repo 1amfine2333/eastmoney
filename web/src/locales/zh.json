@@ -540,10 +540,10 @@
     "topDetractors": "主要拖累",
     "generateExplanation": "生成解读",
     "generatingExplanation": "AI 正在分析您的收益情况...",
+    "generatingRelatedExplanation":"AI 正在分析持仓相关性分析...",
     "clickToGenerate": "点击\"生成解读\"让 AI 分析您的今日收益表现",
     "aiExplanationHint": "AI 将分析主要贡献和拖累因素，并提供简短的操作建议",
     "regenerate": "重新生成",
-    "generatedAt": "生成于",
     "explanationError": "生成解读失败"
   },
   "stocks": {

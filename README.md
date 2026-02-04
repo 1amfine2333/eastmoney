@@ -183,7 +183,7 @@ REDIS_URL=redis://localhost:6379/0
 
 ```bash
 # 启动后端 (端口 8000)
-python api_server.py
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 # 新终端，启动前端 (端口 5173)
 cd web
