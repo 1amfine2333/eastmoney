@@ -373,66 +373,6 @@ Docker 部署会自动挂载以下目录：
 
 ---
 
-### 传统部署方式
-
-#### 后端 Docker 部署（仅后端）
-
-```bash
-# 构建镜像 根目录执行
-./run_docker.sh
-```
-
-#### 前端 Nginx 部署
-
-建议使用 Nginx 反向代理部署前端：
-
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-    server_name xxxxx.cn;  #替换成你的域名
-
-    # React应用的根目录
-    root /upload/valpha/frontend/dist;   #配置成你打包上传的npm 包路径
-    index index.html;
-
-    # 访问日志和错误日志
-    access_log /var/log/nginx/valpha_access.log;
-    error_log /var/log/nginx/valpha_error.log;
-
-    # Gzip压缩配置（提高加载速度）
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json application/javascript;
-
-    # 处理React Router（重要！）
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-           proxy_pass http://127.0.0.1:9000/api/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-           }
-    # 静态资源缓存
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-
-    # 禁止访问隐藏文件
-    location ~ /\. {
-        deny all;
-        access_log off;
-        log_not_found off;
-    }
-}
-```
-
----
 
 ## 贡献指南
 
@@ -472,8 +412,5 @@ server {
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Austin-Patrician/eastmoney&type=Date)](https://star-history.com/#Austin-Patrician/eastmoney&Date)
 
----
 
-<p align="center">
-  Made with ❤️ for Chinese Market Investors
-</p>
+
